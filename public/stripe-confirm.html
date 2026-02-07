@@ -9,6 +9,10 @@
     const stripe = Stripe(pk, { stripeAccount: account });
     return stripe.confirmCardPayment(clientSecret, { payment_method: sourceId });
   };
+  window.retrievePayment = async function(pk, account, clientSecret) {
+    const stripe = Stripe(pk, { stripeAccount: account });
+    return stripe.retrievePaymentIntent(clientSecret);
+  };
   window.stripeReady = true;
 </script>
 </body>

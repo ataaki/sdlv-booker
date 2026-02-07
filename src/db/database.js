@@ -40,12 +40,23 @@ function initSchema() {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (rule_id) REFERENCES booking_rules(id)
     );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
 
   // Migration: add playground_order column if missing
   const cols = db.pragma('table_info(booking_rules)');
   if (!cols.some(c => c.name === 'playground_order')) {
     db.exec('ALTER TABLE booking_rules ADD COLUMN playground_order TEXT');
+  }
+
+  // Seed default settings
+  const existing = db.prepare('SELECT value FROM settings WHERE key = ?').get('booking_advance_days');
+  if (!existing) {
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('booking_advance_days', '45');
   }
 }
 
@@ -109,11 +120,28 @@ function createLog({ rule_id, target_date, target_time, booked_time, playground,
   return stmt.run(rule_id, target_date, target_time, booked_time, playground, status, booking_id, error_message);
 }
 
+function deleteLogs(ids) {
+  if (!ids || ids.length === 0) return;
+  const placeholders = ids.map(() => '?').join(',');
+  return getDb().prepare(`DELETE FROM booking_logs WHERE id IN (${placeholders})`).run(...ids);
+}
+
 function getUpcomingBookings() {
   const today = new Date().toISOString().split('T')[0];
   return getDb().prepare(
     "SELECT * FROM booking_logs WHERE target_date >= ? AND status = 'success' ORDER BY target_date, booked_time"
   ).all(today);
+}
+
+// --- Settings ---
+
+function getSetting(key, defaultValue = null) {
+  const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  return row ? row.value : defaultValue;
+}
+
+function setSetting(key, value) {
+  getDb().prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, String(value));
 }
 
 module.exports = {
@@ -126,5 +154,8 @@ module.exports = {
   deleteRule,
   getLogs,
   createLog,
+  deleteLogs,
   getUpcomingBookings,
+  getSetting,
+  setSetting,
 };

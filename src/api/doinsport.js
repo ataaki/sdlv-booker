@@ -1,8 +1,7 @@
 const { getToken } = require('./auth');
+const { getConfig, CLUB_ID } = require('./config-resolver');
 
 const API_BASE = 'https://api-v3.doinsport.club';
-
-const CLUB_ID = '1ce2c55d-6010-4f45-9b6f-1aafc04382fa';
 const ACTIVITY_FOOTBALL_5V5 = 'cc4da804-1ef4-4f57-9fa4-4c203cdc06c8';
 const CATEGORY_FOOTBALL = '910503af-d67a-4f2b-a0df-838e0b4fb8ac';
 
@@ -232,9 +231,9 @@ async function createPaymentCart(bookingId, price) {
  * @returns {object} Payment data with status
  */
 async function createPayment(cartId, amount, clientId, userId) {
-  const stripeSourceId = process.env.STRIPE_SOURCE_ID;
+  const { stripeSourceId } = getConfig();
   if (!stripeSourceId) {
-    throw new Error('STRIPE_SOURCE_ID not configured in .env');
+    throw new Error('Aucun moyen de paiement trouvé — fais au moins un paiement via l\'app DoInSport');
   }
 
   const body = {

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0f2b3c"/>
+  <circle cx="256" cy="240" r="120" fill="none" stroke="#38bdf8" stroke-width="12"/>
+  <path d="M256 120 L256 240 L340 200" fill="none" stroke="#38bdf8" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="256" cy="240" r="8" fill="#38bdf8"/>
+  <text x="256" y="410" text-anchor="middle" font-family="Arial,sans-serif" font-weight="700" font-size="48" fill="#ffffff">FDL</text>
+</svg>

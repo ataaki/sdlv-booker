@@ -4,6 +4,7 @@ const DAY_NAMES_FULL = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vend
 
 let editingRuleId = null;
 let dashboardConfig = null;
+let selectedLogIds = new Set();
 
 // ===== TOAST NOTIFICATIONS =====
 
@@ -114,8 +115,13 @@ async function apiPut(path, body) {
   return data;
 }
 
-async function apiDelete(path) {
-  const res = await fetch(`${API}${path}`, { method: 'DELETE' });
+async function apiDelete(path, body) {
+  const opts = { method: 'DELETE' };
+  if (body) {
+    opts.headers = { 'Content-Type': 'application/json' };
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(`${API}${path}`, opts);
   const text = await res.text();
   try {
     return JSON.parse(text);
@@ -150,7 +156,7 @@ async function loadBookings() {
   } catch (err) {
     console.error('Failed to load bookings:', err);
     document.getElementById('bookings-list').innerHTML =
-      '<p class="empty-state">Erreur de chargement des reservations.</p>';
+      '<p class="empty-state">Erreur de chargement des réservations.</p>';
   } finally {
     btnLoading(btn, false);
   }
@@ -159,6 +165,68 @@ async function loadBookings() {
 function renderStats(data) {
   const activeRules = data.rules.filter(r => r.enabled).length;
   document.getElementById('stat-rules').textContent = activeRules;
+
+  const advanceDays = data.config.advance_days;
+  document.getElementById('stat-advance').textContent = `J-${advanceDays}`;
+  const infoEl = document.getElementById('info-advance');
+  if (infoEl) infoEl.textContent = advanceDays;
+}
+
+// ===== ADVANCE DAYS SETTING =====
+
+async function editAdvanceDays() {
+  const current = dashboardConfig ? dashboardConfig.advance_days : 45;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-title">Intervalle de réservation</div>
+      <div class="modal-message">Nombre de jours à l'avance pour la réservation automatique (entre 1 et 90).</div>
+      <div class="form-group" style="margin-bottom: 24px">
+        <label>Jours d'avance (J-N)</label>
+        <input type="number" id="input-advance-days" value="${current}" min="1" max="90" style="width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: inherit; font-size: 14px;">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" data-action="cancel">Annuler</button>
+        <button class="btn btn-primary" data-action="confirm">Enregistrer</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const input = overlay.querySelector('#input-advance-days');
+  input.focus();
+  input.select();
+
+  return new Promise((resolve) => {
+    async function save() {
+      const val = parseInt(input.value);
+      if (isNaN(val) || val < 1 || val > 90) {
+        toast('warning', 'Valeur invalide', 'La valeur doit être entre 1 et 90.');
+        return;
+      }
+      try {
+        await apiPut('/settings', { booking_advance_days: val });
+        toast('success', 'Paramètre mis à jour', `Intervalle de réservation : J-${val}`);
+        loadDashboard();
+      } catch (err) {
+        toast('error', 'Erreur', err.message);
+      }
+      close();
+    }
+
+    function close() {
+      overlay.classList.add('modal-out');
+      overlay.addEventListener('animationend', () => overlay.remove());
+      resolve();
+    }
+
+    overlay.querySelector('[data-action="cancel"]').onclick = close;
+    overlay.querySelector('[data-action="confirm"]').onclick = save;
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  });
 }
 
 // ===== RULES =====
@@ -167,7 +235,7 @@ function renderRules(rules) {
   const container = document.getElementById('rules-list');
 
   if (!rules || rules.length === 0) {
-    container.innerHTML = '<p class="empty-state">Aucune regle configuree. Cliquez sur "+ Nouvelle regle" pour commencer.</p>';
+    container.innerHTML = '<p class="empty-state">Aucune règle configurée. Cliquez sur "+ Nouvelle règle" pour commencer.</p>';
     return;
   }
 
@@ -175,16 +243,16 @@ function renderRules(rules) {
     const pgOrder = rule.playground_order;
     const pgLabel = pgOrder && pgOrder.length > 0
       ? pgOrder.join(', ')
-      : 'Aucune preference';
+      : 'Aucune préférence';
 
     const j45 = rule.j45;
     let j45Label = '';
     if (j45.days_until_attempt === 0) {
-      j45Label = `Reservation auto aujourd'hui a 00:00 pour le ${formatDate(j45.target_date)}`;
+      j45Label = `Réservation auto aujourd'hui à 00:00 pour le ${formatDate(j45.target_date)}`;
     } else if (j45.days_until_attempt === 1) {
-      j45Label = `Reservation auto demain a 00:00 pour le ${formatDate(j45.target_date)}`;
+      j45Label = `Réservation auto demain à 00:00 pour le ${formatDate(j45.target_date)}`;
     } else {
-      j45Label = `Reservation auto le ${formatDate(j45.attempt_date)} a 00:00 pour le ${formatDate(j45.target_date)} (dans ${j45.days_until_attempt}j)`;
+      j45Label = `Réservation auto le ${formatDate(j45.attempt_date)} à 00:00 pour le ${formatDate(j45.target_date)} (dans ${j45.days_until_attempt}j)`;
     }
 
     return `
@@ -197,9 +265,9 @@ function renderRules(rules) {
           <div class="rule-next">${j45Label}</div>
         </div>
         <div class="rule-actions">
-          <button class="btn btn-success btn-sm" id="btn-book-${rule.id}" onclick="bookNow(${rule.id}, '${j45.target_date}', this)" title="Reserver maintenant">&#9889; Reserver</button>
+          <button class="btn btn-success btn-sm" id="btn-book-${rule.id}" onclick="bookNow(${rule.id}, '${j45.target_date}', this)" title="Réserver maintenant">&#9889; Réserver</button>
           <button class="btn-icon" onclick="editRule(${rule.id})" title="Modifier">&#9998;</button>
-          <label class="toggle" title="${rule.enabled ? 'Desactiver' : 'Activer'}">
+          <label class="toggle" title="${rule.enabled ? 'Désactiver' : 'Activer'}">
             <input type="checkbox" ${rule.enabled ? 'checked' : ''} onchange="toggleRule(${rule.id}, this.checked)">
             <span class="toggle-slider"></span>
           </label>
@@ -272,7 +340,7 @@ function getPlaygroundOrder() {
 
 function showAddRule() {
   editingRuleId = null;
-  document.getElementById('form-title').textContent = 'Ajouter une regle';
+  document.getElementById('form-title').textContent = 'Ajouter une règle';
   document.getElementById('input-day').value = '1';
   document.getElementById('input-time').value = '19:00';
   document.getElementById('input-duration').value = '60';
@@ -287,7 +355,7 @@ function editRule(id) {
   if (!rule) return;
 
   editingRuleId = id;
-  document.getElementById('form-title').textContent = 'Modifier la regle';
+  document.getElementById('form-title').textContent = 'Modifier la règle';
   document.getElementById('input-day').value = String(rule.day_of_week);
   document.getElementById('input-time').value = rule.target_time;
   document.getElementById('input-duration').value = String(rule.duration);
@@ -316,10 +384,10 @@ async function saveRule() {
   try {
     if (editingRuleId) {
       await apiPut(`/rules/${editingRuleId}`, { day_of_week, target_time, duration, playground_order });
-      toast('success', 'Regle modifiee', `${DAY_NAMES_FULL[day_of_week]} a ${target_time}`);
+      toast('success', 'Règle modifiée', `${DAY_NAMES_FULL[day_of_week]} à ${target_time}`);
     } else {
       await apiPost('/rules', { day_of_week, target_time, duration, playground_order });
-      toast('success', 'Regle creee', `${DAY_NAMES_FULL[day_of_week]} a ${target_time}`);
+      toast('success', 'Règle créée', `${DAY_NAMES_FULL[day_of_week]} à ${target_time}`);
     }
     hideAddRule();
     loadDashboard();
@@ -333,7 +401,7 @@ async function saveRule() {
 async function toggleRule(id, enabled) {
   try {
     await apiPut(`/rules/${id}`, { enabled });
-    toast('info', enabled ? 'Regle activee' : 'Regle desactivee');
+    toast('info', enabled ? 'Règle activée' : 'Règle désactivée');
     loadDashboard();
   } catch (err) {
     toast('error', 'Erreur', err.message);
@@ -342,11 +410,11 @@ async function toggleRule(id, enabled) {
 }
 
 async function deleteRuleConfirm(id) {
-  const ok = await confirmModal('Supprimer la regle ?', 'Cette action est irreversible. La regle sera definitivement supprimee.', 'Supprimer', 'btn-danger');
+  const ok = await confirmModal('Supprimer la règle ?', 'Cette action est irréversible. La règle sera définitivement supprimée.', 'Supprimer', 'btn-danger');
   if (!ok) return;
   try {
     await apiDelete(`/rules/${id}`);
-    toast('success', 'Regle supprimee');
+    toast('success', 'Règle supprimée');
     loadDashboard();
   } catch (err) {
     toast('error', 'Erreur', err.message);
@@ -354,20 +422,20 @@ async function deleteRuleConfirm(id) {
 }
 
 async function bookNow(ruleId, targetDate, btnEl) {
-  const ok = await confirmModal('Reservation immediate', `Lancer une reservation pour le ${formatDate(targetDate)} ?`, 'Reserver', 'btn-success');
+  const ok = await confirmModal('Réservation immédiate', `Lancer une réservation pour le ${formatDate(targetDate)} ?`, 'Réserver', 'btn-success');
   if (!ok) return;
 
   btnLoading(btnEl, true);
   try {
     const result = await apiPost('/book-now', { rule_id: ruleId, date: targetDate });
     if (result.status === 'success') {
-      toast('success', 'Reservation reussie', `${result.playground} a ${result.booked_time} le ${formatDate(result.target_date)}`);
+      toast('success', 'Réservation réussie', `${result.playground} à ${result.booked_time} le ${formatDate(result.target_date)}`);
     } else if (result.status === 'skipped') {
-      toast('warning', 'Doublon', `Une reservation existe deja le ${formatDate(result.target_date)}.`);
+      toast('warning', 'Doublon', `Une réservation existe déjà le ${formatDate(result.target_date)}.`);
     } else if (result.status === 'no_slots') {
-      toast('warning', 'Indisponible', `Aucun creneau disponible le ${formatDate(result.target_date)}.`);
+      toast('warning', 'Indisponible', `Aucun créneau disponible le ${formatDate(result.target_date)}.`);
     } else {
-      toast('error', 'Echec', result.error_message || result.error || 'Erreur inconnue');
+      toast('error', 'Échec', result.error_message || result.error || 'Erreur inconnue');
     }
     loadDashboard();
   } catch (err) {
@@ -404,7 +472,7 @@ async function searchSlots() {
     const slots = await apiGet(url);
 
     if (!Array.isArray(slots) || slots.length === 0) {
-      container.innerHTML = '<p class="empty-state">Aucun creneau disponible pour cette date.</p>';
+      container.innerHTML = '<p class="empty-state">Aucun créneau disponible pour cette date.</p>';
       return;
     }
 
@@ -415,7 +483,7 @@ async function searchSlots() {
           <tr>
             <th>Heure</th>
             <th>Terrain</th>
-            ${showDuration ? '<th>Duree</th>' : ''}
+            ${showDuration ? '<th>Durée</th>' : ''}
             <th>Prix/pers</th>
             <th></th>
           </tr>
@@ -429,7 +497,7 @@ async function searchSlots() {
               <td>${s.playground.name}</td>
               ${showDuration ? `<td>${dur} min</td>` : ''}
               <td>${(s.price / 100).toFixed(2)} EUR</td>
-              <td><button class="btn btn-success btn-sm slot-book-btn" onclick="bookSlot('${date}', '${s.startAt}', ${dur}, '${s.playground.name}', this)">Reserver</button></td>
+              <td><button class="btn btn-success btn-sm slot-book-btn" onclick="bookSlot('${date}', '${s.startAt}', ${dur}, '${s.playground.name}', this)">Réserver</button></td>
             </tr>
           `}).join('')}
         </tbody>
@@ -444,9 +512,9 @@ async function searchSlots() {
 
 async function bookSlot(date, startTime, duration, playgroundName, btnEl) {
   const ok = await confirmModal(
-    'Confirmer la reservation',
-    `${playgroundName} le ${formatDate(date)} a ${startTime} (${duration}min)`,
-    'Reserver', 'btn-success'
+    'Confirmer la réservation',
+    `${playgroundName} le ${formatDate(date)} à ${startTime} (${duration}min)`,
+    'Réserver', 'btn-success'
   );
   if (!ok) return;
 
@@ -454,11 +522,11 @@ async function bookSlot(date, startTime, duration, playgroundName, btnEl) {
   try {
     const result = await apiPost('/book-manual', { date, startTime, duration, playgroundName });
     if (result.status === 'success') {
-      toast('success', 'Reservation reussie', `${result.playground} a ${result.booked_time} le ${formatDate(result.target_date)} - ${(result.price / 100).toFixed(2)} EUR/pers`);
+      toast('success', 'Réservation réussie', `${result.playground} à ${result.booked_time} le ${formatDate(result.target_date)} - ${(result.price / 100).toFixed(2)} EUR/pers`);
       loadBookings();
       searchSlots();
     } else {
-      toast('error', 'Echec', result.error || 'Erreur inconnue');
+      toast('error', 'Échec', result.error || 'Erreur inconnue');
     }
   } catch (err) {
     toast('error', 'Erreur', err.message);
@@ -473,7 +541,7 @@ function renderBookings(bookings) {
   const container = document.getElementById('bookings-list');
 
   if (!bookings || bookings.length === 0) {
-    container.innerHTML = '<p class="empty-state">Aucune reservation a venir.</p>';
+    container.innerHTML = '<p class="empty-state">Aucune réservation à venir.</p>';
     return;
   }
 
@@ -496,9 +564,10 @@ function renderBookings(bookings) {
           const endTime = b.endAt ? new Date(b.endAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '-';
           const priceStr = b.pricePerParticipant ? (b.pricePerParticipant / 100).toFixed(2) + ' EUR' : '-';
           const statusBadge = b.confirmed
-            ? '<span class="badge badge-success">Confirmee</span>'
-            : '<span class="badge badge-pending">Non confirmee</span>';
+            ? '<span class="badge badge-success">Confirmée</span>'
+            : '<span class="badge badge-pending">Non confirmée</span>';
           const bookingId = b.id.replace(/'/g, "\\'");
+          const pgName = (b.playground || '-').replace(/'/g, "\\'");
           return `
             <tr>
               <td><strong>${dateStr}</strong></td>
@@ -506,7 +575,7 @@ function renderBookings(bookings) {
               <td>${b.playground || '-'}</td>
               <td>${priceStr}/pers</td>
               <td>${statusBadge}</td>
-              <td><button class="btn btn-danger btn-sm" onclick="cancelBooking('${bookingId}', '${dateStr}', this)">Annuler</button></td>
+              <td><button class="btn btn-danger btn-sm" onclick="cancelBooking('${bookingId}', '${b.date}', '${startTime}', '${pgName}', this)">Annuler</button></td>
             </tr>
           `;
         }).join('')}
@@ -515,23 +584,25 @@ function renderBookings(bookings) {
   `;
 }
 
-async function cancelBooking(bookingId, dateStr, btnEl) {
+async function cancelBooking(bookingId, date, time, playground, btnEl) {
   const ok = await confirmModal(
-    'Annuler la reservation ?',
-    `Reservation du ${dateStr}. Le remboursement sera automatique si le paiement a ete effectue.`,
-    'Annuler la reservation', 'btn-danger'
+    'Annuler la réservation ?',
+    `Réservation du ${formatDate(date)} à ${time} (${playground}). Le remboursement sera automatique si le paiement a été effectué.`,
+    'Annuler la réservation', 'btn-danger'
   );
   if (!ok) return;
 
   btnLoading(btnEl, true);
   try {
-    const result = await apiDelete(`/bookings/${bookingId}`);
+    const params = new URLSearchParams({ date, time, playground });
+    const result = await apiDelete(`/bookings/${bookingId}?${params}`);
     if (result.success) {
-      toast('success', 'Reservation annulee', 'Le remboursement sera effectue automatiquement.');
+      toast('success', 'Réservation annulée', `${playground} le ${formatDate(date)} à ${time}`);
     } else {
       toast('error', 'Erreur', result.error || 'Erreur inconnue');
     }
     loadBookings();
+    loadDashboard();
   } catch (err) {
     toast('error', 'Erreur', err.message);
   } finally {
@@ -543,6 +614,8 @@ async function cancelBooking(bookingId, dateStr, btnEl) {
 
 function renderLogs(logs) {
   const container = document.getElementById('logs-list');
+  selectedLogIds.clear();
+  updateDeleteButton();
 
   if (!logs || logs.length === 0) {
     container.innerHTML = '<p class="empty-state">Aucun historique.</p>';
@@ -550,22 +623,24 @@ function renderLogs(logs) {
   }
 
   const statusLabels = {
-    success: 'Reussi',
-    failed: 'Echoue',
-    payment_failed: 'Paiement echoue',
+    success: 'Réussi',
+    failed: 'Échoué',
+    payment_failed: 'Paiement échoué',
     no_slots: 'Indispo',
     pending: 'En cours',
     skipped: 'Doublon',
+    cancelled: 'Annulé',
   };
 
   container.innerHTML = `
     <table class="logs-table">
       <thead>
         <tr>
+          <th class="log-check-col"><input type="checkbox" id="log-select-all" onchange="toggleAllLogs(this.checked)" title="Tout sélectionner"></th>
           <th>Type</th>
           <th>Date cible</th>
-          <th>Heure visee</th>
-          <th>Heure reservee</th>
+          <th>Heure visée</th>
+          <th>Heure réservée</th>
           <th>Terrain</th>
           <th>Statut</th>
           <th>Date</th>
@@ -578,19 +653,89 @@ function renderLogs(logs) {
             ? '<span class="badge badge-auto">Auto</span>'
             : '<span class="badge badge-manual">Manuel</span>';
           return `
-          <tr>
+          <tr data-log-id="${log.id}">
+            <td class="log-check-col"><input type="checkbox" class="log-checkbox" value="${log.id}" onchange="toggleLogSelection(${log.id}, this.checked)"></td>
             <td>${typeBadge}</td>
             <td>${formatDate(log.target_date)}</td>
             <td>${log.target_time}</td>
             <td>${log.booked_time || '-'}</td>
             <td>${log.playground || '-'}</td>
-            <td><span class="badge badge-${log.status}">${statusLabels[log.status] || log.status}</span></td>
+            <td><span class="badge badge-${log.status}${log.error_message ? ' log-error-hint' : ''}"${log.error_message ? ` title="${log.error_message.replace(/"/g, '&quot;')}"` : ''}>${statusLabels[log.status] || log.status}</span></td>
             <td>${formatDateTime(log.created_at)}</td>
           </tr>
         `}).join('')}
       </tbody>
     </table>
   `;
+}
+
+function toggleLogSelection(id, checked) {
+  if (checked) {
+    selectedLogIds.add(id);
+  } else {
+    selectedLogIds.delete(id);
+  }
+  updateDeleteButton();
+  updateSelectAllCheckbox();
+}
+
+function toggleAllLogs(checked) {
+  const checkboxes = document.querySelectorAll('.log-checkbox');
+  checkboxes.forEach(cb => {
+    cb.checked = checked;
+    const id = parseInt(cb.value);
+    if (checked) {
+      selectedLogIds.add(id);
+    } else {
+      selectedLogIds.delete(id);
+    }
+  });
+  updateDeleteButton();
+}
+
+function updateSelectAllCheckbox() {
+  const all = document.querySelectorAll('.log-checkbox');
+  const selectAll = document.getElementById('log-select-all');
+  if (!selectAll || all.length === 0) return;
+  const allChecked = [...all].every(cb => cb.checked);
+  const someChecked = [...all].some(cb => cb.checked);
+  selectAll.checked = allChecked;
+  selectAll.indeterminate = someChecked && !allChecked;
+}
+
+function updateDeleteButton() {
+  const btn = document.getElementById('btn-delete-logs');
+  if (!btn) return;
+  if (selectedLogIds.size > 0) {
+    btn.style.display = '';
+    btn.textContent = `Supprimer (${selectedLogIds.size})`;
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+async function deleteSelectedLogs() {
+  if (selectedLogIds.size === 0) return;
+  const count = selectedLogIds.size;
+  const ok = await confirmModal(
+    'Supprimer les entrées ?',
+    `${count} entrée${count > 1 ? 's' : ''} de l'historique seront définitivement supprimée${count > 1 ? 's' : ''}.`,
+    'Supprimer', 'btn-danger'
+  );
+  if (!ok) return;
+
+  const btn = document.getElementById('btn-delete-logs');
+  btnLoading(btn, true);
+  try {
+    await apiDelete('/logs', { ids: [...selectedLogIds] });
+    toast('success', 'Historique nettoyé', `${count} entrée${count > 1 ? 's' : ''} supprimée${count > 1 ? 's' : ''}.`);
+    selectedLogIds.clear();
+    loadDashboard();
+  } catch (err) {
+    toast('error', 'Erreur', err.message);
+  } finally {
+    btnLoading(btn, false);
+  }
 }
 
 // ===== HELPERS =====

@@ -2,8 +2,16 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SDLV Booker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0f2b3c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Foot Du Lundi">
+  <meta name="description" content="Bot de réservation automatique pour les terrains de foot">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <title>Foot Du Lundi</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -13,7 +21,7 @@
         <div class="header-row">
           <div class="logo">
             <div class="logo-icon">&#9917;</div>
-            <h1>SDLV Booker</h1>
+            <h1>Foot Du Lundi</h1>
           </div>
           <div class="header-badge">
             <span class="header-badge-dot"></span>
@@ -28,28 +36,28 @@
       <section class="stats-bar">
         <div class="stat-card">
           <span class="stat-value" id="stat-rules">-</span>
-          <span class="stat-label">Regles actives</span>
+          <span class="stat-label">Règles actives</span>
         </div>
         <div class="stat-card">
           <span class="stat-value" id="stat-upcoming">-</span>
-          <span class="stat-label">Reservations a venir</span>
+          <span class="stat-label">Réservations à venir</span>
         </div>
-        <div class="stat-card">
+        <div class="stat-card stat-card-editable" onclick="editAdvanceDays()" title="Cliquer pour modifier">
           <span class="stat-value" id="stat-advance">J-45</span>
-          <span class="stat-label">Ouverture creneaux</span>
+          <span class="stat-label">Ouverture créneaux</span>
         </div>
       </section>
 
       <!-- Rules Section -->
       <section class="section">
         <div class="section-header">
-          <h2>Regles de reservation</h2>
-          <button class="btn btn-primary" onclick="showAddRule()">+ Nouvelle regle</button>
+          <h2>Règles de réservation</h2>
+          <button class="btn btn-primary" onclick="showAddRule()">+ Nouvelle règle</button>
         </div>
 
         <!-- Add Rule Form (hidden by default) -->
         <div id="rule-form" class="card rule-form" style="display:none">
-          <h3 id="form-title">Ajouter une regle</h3>
+          <h3 id="form-title">Ajouter une règle</h3>
           <div class="form-grid">
             <div class="form-group">
               <label>Jour de la semaine</label>
@@ -64,11 +72,11 @@
               </select>
             </div>
             <div class="form-group">
-              <label>Heure souhaitee</label>
+              <label>Heure souhaitée</label>
               <input type="time" id="input-time" value="19:00">
             </div>
             <div class="form-group">
-              <label>Duree</label>
+              <label>Durée</label>
               <select id="input-duration">
                 <option value="60">60 min</option>
                 <option value="90">90 min</option>
@@ -77,12 +85,25 @@
             </div>
           </div>
           <div class="form-group" style="margin-top: 12px">
-            <label>Preference de terrains (glisser pour ordonner, decocher pour exclure)</label>
+            <label>Préférence de terrains (glisser pour ordonner, décocher pour exclure)</label>
             <div id="playground-prefs" class="playground-prefs"></div>
           </div>
           <div class="form-actions">
             <button class="btn btn-secondary" onclick="hideAddRule()">Annuler</button>
             <button class="btn btn-primary" id="btn-save-rule" onclick="saveRule()">Enregistrer</button>
+          </div>
+        </div>
+
+        <!-- Info Note -->
+        <div class="info-note">
+          <span class="info-note-icon">&#8505;&#65039;</span>
+          <div>
+            <strong>Fonctionnement du bot</strong>
+            <ul>
+              <li>Le scheduler se déclenche chaque jour à <strong>00:00</strong> et réserve les créneaux qui ouvrent à J-<span id="info-advance">45</span></li>
+              <li>Si ta banque demande une confirmation 3DS, le bot attend jusqu'à <strong>5 minutes</strong> que tu valides sur ton appli bancaire</li>
+              <li>Le bot choisit le meilleur terrain disponible selon tes préférences</li>
+            </ul>
           </div>
         </div>
 
@@ -95,33 +116,37 @@
       <!-- Manual Booking Section -->
       <section class="section">
         <div class="section-header">
-          <h2>Reservation manuelle</h2>
+          <h2>Réservation manuelle</h2>
         </div>
         <div class="card">
-          <div class="form-grid">
-            <div class="form-group">
+          <div class="manual-form">
+            <div class="form-group manual-form-date">
               <label>Date</label>
               <input type="date" id="manual-date">
             </div>
-            <div class="form-group">
-              <label>Heure debut</label>
-              <input type="time" id="manual-time-from" value="19:00">
+            <div class="manual-form-time-row">
+              <div class="form-group">
+                <label>De</label>
+                <input type="time" id="manual-time-from" value="19:00">
+              </div>
+              <div class="form-group">
+                <label>À</label>
+                <input type="time" id="manual-time-to" value="22:00">
+              </div>
             </div>
-            <div class="form-group">
-              <label>Heure fin</label>
-              <input type="time" id="manual-time-to" value="22:00">
-            </div>
-            <div class="form-group">
-              <label>Duree</label>
-              <select id="manual-duration">
-                <option value="">Toutes</option>
-                <option value="60">60 min</option>
-                <option value="90">90 min</option>
-                <option value="120">120 min</option>
-              </select>
-            </div>
-            <div class="form-group" style="display:flex;align-items:flex-end">
-              <button class="btn btn-primary" id="btn-search-slots" onclick="searchSlots()">Rechercher</button>
+            <div class="manual-form-bottom-row">
+              <div class="form-group">
+                <label>Durée</label>
+                <select id="manual-duration">
+                  <option value="">Toutes</option>
+                  <option value="60">60 min</option>
+                  <option value="90">90 min</option>
+                  <option value="120">120 min</option>
+                </select>
+              </div>
+              <div class="form-group manual-form-action">
+                <button class="btn btn-primary" id="btn-search-slots" onclick="searchSlots()">Rechercher</button>
+              </div>
             </div>
           </div>
           <div id="manual-slots"></div>
@@ -131,7 +156,7 @@
       <!-- Bookings Section (live from DoInSport) -->
       <section class="section">
         <div class="section-header">
-          <h2>Mes reservations</h2>
+          <h2>Mes réservations</h2>
           <button class="btn btn-secondary btn-sm" id="btn-refresh-bookings" onclick="loadBookings()">Actualiser</button>
         </div>
         <div id="bookings-list" class="logs-table-container">
@@ -142,7 +167,8 @@
       <!-- Logs Section -->
       <section class="section">
         <div class="section-header">
-          <h2>Historique du bot</h2>
+          <h2>Historique</h2>
+          <button class="btn btn-danger btn-sm" id="btn-delete-logs" style="display:none" onclick="deleteSelectedLogs()">Supprimer la sélection</button>
         </div>
         <div id="logs-list" class="logs-table-container">
           <div class="section-loading"><div class="section-spinner"></div> Chargement...</div>
@@ -155,5 +181,10 @@
   <div class="toast-container" id="toast-container"></div>
 
   <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+  </script>
 </body>
 </html>

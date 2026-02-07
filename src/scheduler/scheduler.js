@@ -1,11 +1,14 @@
 const cron = require('node-cron');
-const { getEnabledRules, createLog } = require('../db/database');
+const { getEnabledRules, createLog, getSetting } = require('../db/database');
 const { findBestSlot, createBooking, createPaymentCart, createPayment, confirmDoinsportPayment, hasBookingOnDate } = require('../api/doinsport');
 const { getMe } = require('../api/auth');
 const { confirmStripePayment } = require('../api/stripe-confirm');
 
 const DAY_NAMES = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
-const BOOKING_ADVANCE_DAYS = 45;
+
+function getBookingAdvanceDays() {
+  return parseInt(getSetting('booking_advance_days', '45'));
+}
 
 /** Format a local Date as YYYY-MM-DD without UTC conversion */
 function formatLocalDate(d) {
@@ -33,7 +36,7 @@ async function getUserInfo() {
 function getTargetDateForToday(dayOfWeek) {
   const now = new Date();
   const targetDate = new Date(now);
-  targetDate.setDate(targetDate.getDate() + BOOKING_ADVANCE_DAYS);
+  targetDate.setDate(targetDate.getDate() + getBookingAdvanceDays());
 
   if (targetDate.getDay() === dayOfWeek) {
     return formatLocalDate(targetDate);
@@ -64,9 +67,11 @@ function getJ45Info(dayOfWeek) {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-  // The J-45 target date = today + 45 days
+  const advanceDays = getBookingAdvanceDays();
+
+  // The J-N target date = today + N days
   const j45Date = new Date(today);
-  j45Date.setDate(j45Date.getDate() + BOOKING_ADVANCE_DAYS);
+  j45Date.setDate(j45Date.getDate() + advanceDays);
 
   // Find how many days until J-45 lands on the rule's day of week
   const j45Day = j45Date.getDay();
@@ -77,9 +82,9 @@ function getJ45Info(dayOfWeek) {
   const targetDate = new Date(j45Date);
   targetDate.setDate(targetDate.getDate() + daysUntilMatch);
 
-  // The bot attempt date = target date - 45 days
+  // The bot attempt date = target date - N days
   const attemptDate = new Date(targetDate);
-  attemptDate.setDate(attemptDate.getDate() - BOOKING_ADVANCE_DAYS);
+  attemptDate.setDate(attemptDate.getDate() - advanceDays);
 
   return {
     target_date: formatLocalDate(targetDate),
@@ -132,6 +137,10 @@ async function executeBooking(rule, targetDate) {
 
     console.log(`[Scheduler] Found slot: ${best.playground.name} at ${best.slot.startAt} (${best.price.pricePerParticipant/100} EUR/pers)`);
 
+    // Fill slot info now so logs are complete even if payment fails later
+    log.booked_time = best.slot.startAt;
+    log.playground = best.playground.name;
+
     // Get user info for booking
     const me = await getUserInfo();
 
@@ -154,7 +163,8 @@ async function executeBooking(rule, targetDate) {
     const cart = await createPaymentCart(bookingId, best.price.pricePerParticipant);
     const cartId = cart.id || cart['@id']?.split('/').pop();
 
-    const clubClientId = process.env.CLUB_CLIENT_ID;
+    const { getConfig } = require('../api/config-resolver');
+    const { clubClientId } = getConfig();
     const payment = await createPayment(cartId, best.price.pricePerParticipant, clubClientId, me.id);
     const paymentId = payment.id || payment['@id']?.split('/').pop();
     const clientSecret = payment.metadata?.clientSecret;
@@ -253,5 +263,5 @@ module.exports = {
   getNextDateForDay,
   getJ45Info,
   DAY_NAMES,
-  BOOKING_ADVANCE_DAYS,
+  getBookingAdvanceDays,
 };

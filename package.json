@@ -1,7 +1,7 @@
 {
-  "name": "sdlv-booker",
+  "name": "foot-du-lundi",
   "version": "1.0.0",
-  "description": "Bot de reservation automatique pour Sport dans la Ville (DoInSport)",
+  "description": "Bot de réservation automatique pour les terrains de foot (DoInSport)",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

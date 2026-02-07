@@ -4,7 +4,7 @@ const db = require('../db/database');
 const { getPlanning, findAllSlots, findBestSlot, createBooking, createPaymentCart, createPayment, confirmDoinsportPayment, cancelBooking, getMyBookings, PLAYGROUNDS, PLAYGROUND_NAMES } = require('../api/doinsport');
 const { getMe } = require('../api/auth');
 const { confirmStripePayment } = require('../api/stripe-confirm');
-const { executeBooking, getNextDateForDay, getJ45Info, DAY_NAMES, BOOKING_ADVANCE_DAYS } = require('../scheduler/scheduler');
+const { executeBooking, getNextDateForDay, getJ45Info, DAY_NAMES, getBookingAdvanceDays } = require('../scheduler/scheduler');
 
 // --- Rules CRUD ---
 
@@ -59,6 +59,35 @@ router.get('/logs', (req, res) => {
   const limit = parseInt(req.query.limit) || 50;
   const logs = db.getLogs(limit);
   res.json(logs);
+});
+
+router.delete('/logs', (req, res) => {
+  const { ids } = req.body;
+  if (!ids || !Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids array is required' });
+  }
+  db.deleteLogs(ids.map(id => parseInt(id)));
+  res.json({ success: true, deleted: ids.length });
+});
+
+// --- Settings ---
+
+router.get('/settings', (req, res) => {
+  res.json({
+    booking_advance_days: parseInt(db.getSetting('booking_advance_days', '45')),
+  });
+});
+
+router.put('/settings', (req, res) => {
+  const { booking_advance_days } = req.body;
+  if (booking_advance_days !== undefined) {
+    const val = parseInt(booking_advance_days);
+    if (isNaN(val) || val < 1 || val > 90) {
+      return res.status(400).json({ error: 'booking_advance_days doit être entre 1 et 90' });
+    }
+    db.setSetting('booking_advance_days', val);
+  }
+  res.json({ success: true, booking_advance_days: parseInt(db.getSetting('booking_advance_days', '45')) });
 });
 
 // --- Planning / Preview ---
@@ -125,7 +154,23 @@ router.get('/bookings', async (req, res) => {
 
 router.delete('/bookings/:id', async (req, res) => {
   try {
+    const { date, time, playground } = req.query;
     await cancelBooking(req.params.id);
+
+    // Log the cancellation
+    if (date) {
+      db.createLog({
+        rule_id: null,
+        target_date: date,
+        target_time: time || '-',
+        booked_time: time || null,
+        playground: playground || null,
+        status: 'cancelled',
+        booking_id: req.params.id,
+        error_message: null,
+      });
+    }
+
     res.json({ success: true, message: 'Reservation annulee (remboursement automatique si paiement effectue)' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -210,7 +255,8 @@ router.post('/book-manual', async (req, res) => {
     const cart = await createPaymentCart(bookingId, match.price.pricePerParticipant);
     const cartId = cart.id || cart['@id']?.split('/').pop();
 
-    const clubClientId = process.env.CLUB_CLIENT_ID;
+    const { getConfig } = require('../api/config-resolver');
+    const { clubClientId } = getConfig();
     const payment = await createPayment(cartId, match.price.pricePerParticipant, clubClientId, me.id);
     const paymentId = payment.id || payment['@id']?.split('/').pop();
 
@@ -287,7 +333,7 @@ router.get('/dashboard', (req, res) => {
     rules: rulesWithInfo,
     recent_logs: logs,
     config: {
-      advance_days: BOOKING_ADVANCE_DAYS,
+      advance_days: getBookingAdvanceDays(),
       playgrounds: PLAYGROUNDS,
       playground_names: PLAYGROUND_NAMES,
       durations: [60, 90, 120],
