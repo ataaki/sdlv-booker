@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     port: 5173,
     proxy: {
@@ -11,6 +12,6 @@ export default defineConfig({
   },
   build: {
     outDir: '../public',
-    emptyOutDir: false, // Don't delete stripe-confirm.html & icons
+    emptyOutDir: false,
   },
 })
