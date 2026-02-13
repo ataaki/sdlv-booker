@@ -12,6 +12,7 @@ const { errorHandler, validationError, notFoundError } = require('../middleware/
 const { findAndBookSlot } = require('../services/booking');
 const { executePaymentFlow } = require('../services/payment');
 const { logSuccess, logPaymentFailure, logCancellation } = require('../services/logging');
+const { sendTestMessage } = require('../services/telegram');
 
 // --- Credentials ---
 
@@ -109,21 +110,42 @@ router.delete('/logs', (req, res) => {
 // --- Settings ---
 
 router.get('/settings', (req, res) => {
+  const token = db.getSetting('telegram_bot_token', '');
+  const maskedToken = token ? '****' + token.slice(-4) : '';
   res.json({
     booking_advance_days: parseInt(db.getSetting('booking_advance_days', '45')),
+    telegram_bot_token: maskedToken,
+    telegram_chat_id: db.getSetting('telegram_chat_id', ''),
   });
 });
 
 router.put('/settings', (req, res) => {
-  const { booking_advance_days } = req.body;
+  const { booking_advance_days, telegram_bot_token, telegram_chat_id } = req.body;
+
   if (booking_advance_days !== undefined) {
     const error = validateBookingAdvanceDays(booking_advance_days);
-    if (error) {
-      return validationError(res, error);
-    }
+    if (error) return validationError(res, error);
     db.setSetting('booking_advance_days', parseInt(booking_advance_days));
   }
-  res.json({ success: true, booking_advance_days: parseInt(db.getSetting('booking_advance_days', '45')) });
+
+  if (telegram_bot_token !== undefined) {
+    db.setSetting('telegram_bot_token', telegram_bot_token);
+  }
+
+  if (telegram_chat_id !== undefined) {
+    db.setSetting('telegram_chat_id', telegram_chat_id);
+  }
+
+  res.json({ success: true });
+});
+
+router.post('/telegram/test', async (req, res) => {
+  try {
+    await sendTestMessage();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // --- Planning / Preview ---
