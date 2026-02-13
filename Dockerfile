@@ -2,9 +2,21 @@
 # Optimized for size and security with separate build and runtime stages
 
 # ============================================================================
+# Stage 0: Frontend Builder - Build React app
+# ============================================================================
+FROM node:24-slim AS frontend-builder
+
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+# Output is now at /app/public/
+
+# ============================================================================
 # Stage 1: Builder - Compile native modules (better-sqlite3)
 # ============================================================================
-FROM node:20-slim AS builder
+FROM node:24-slim AS builder
 
 WORKDIR /build
 
@@ -29,7 +41,7 @@ RUN npm ci --omit=dev && \
 # ============================================================================
 # Stage 2: Playwright Builder - Install Chromium browser
 # ============================================================================
-FROM node:20-slim AS playwright-builder
+FROM node:24-slim AS playwright-builder
 
 WORKDIR /app
 
@@ -61,7 +73,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ============================================================================
 # Stage 3: Runtime - Final production image
 # ============================================================================
-FROM node:20-slim
+FROM node:24-slim
 
 # Accept PUID and PGID as build arguments (defaults to 1000)
 ARG PUID=1000
@@ -96,7 +108,10 @@ COPY --from=playwright-builder /root/.cache/ms-playwright /root/.cache/ms-playwr
 # Copy application code
 COPY package.json package-lock.json ./
 COPY src/ src/
-COPY public/ public/
+# Copy built frontend (from React build) + preserved static files
+COPY --from=frontend-builder /app/public/ public/
+# Copy stripe-confirm.html and icons (not part of React build)
+COPY public/stripe-confirm.html public/icon.svg public/
 
 # Create data directory, configure user with specified PUID/PGID, and set ownership in one layer (Optimization #5)
 RUN mkdir -p data && \
