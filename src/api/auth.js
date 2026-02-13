@@ -1,6 +1,5 @@
 const { getCredentials } = require('../db/database');
-
-const API_BASE = 'https://api-v3.doinsport.club';
+const { API_BASE } = require('../constants');
 
 let tokenData = null;
 let tokenExpiry = 0;

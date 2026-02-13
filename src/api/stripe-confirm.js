@@ -1,10 +1,7 @@
 const { chromium } = require('playwright');
+const { STRIPE_STRIPE_POLL_INTERVAL_MS, STRIPE_STRIPE_POLL_TIMEOUT_MS } = require('../constants');
 
 const PORT = process.env.PORT || 3000;
-
-// 3DS challenge polling config
-const POLL_INTERVAL_MS = 30_000; // 30 seconds between checks
-const POLL_TIMEOUT_MS = 5 * 60_000; // 5 minutes max wait
 
 /**
  * Confirm a Stripe payment using Stripe.js in a headless browser.
@@ -58,7 +55,7 @@ async function confirmStripePayment(clientSecret) {
 
     // 3DS challenge triggered — poll until user confirms on banking app
     if (result.paymentIntent?.status === 'requires_action' || result.paymentIntent?.status === 'requires_confirmation') {
-      console.log(`[Stripe] 3DS challenge triggered (status: ${result.paymentIntent.status}), polling for up to ${POLL_TIMEOUT_MS / 60000} minutes...`);
+      console.log(`[Stripe] 3DS challenge triggered (status: ${result.paymentIntent.status}), polling for up to ${STRIPE_POLL_TIMEOUT_MS / 60000} minutes...`);
 
       const pollResult = await pollPaymentStatus(page, pk, account, clientSecret);
       return pollResult;
@@ -79,9 +76,9 @@ async function pollPaymentStatus(page, pk, account, clientSecret) {
   const startTime = Date.now();
   let attempt = 0;
 
-  while (Date.now() - startTime < POLL_TIMEOUT_MS) {
+  while (Date.now() - startTime < STRIPE_POLL_TIMEOUT_MS) {
     attempt++;
-    await sleep(POLL_INTERVAL_MS);
+    await sleep(STRIPE_POLL_INTERVAL_MS);
 
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     console.log(`[Stripe] 3DS poll attempt #${attempt} (${elapsed}s elapsed)...`);
@@ -113,7 +110,7 @@ async function pollPaymentStatus(page, pk, account, clientSecret) {
     // Still requires_action or processing — keep polling
   }
 
-  throw new Error(`3DS challenge timeout: user did not confirm within ${POLL_TIMEOUT_MS / 60000} minutes`);
+  throw new Error(`3DS challenge timeout: user did not confirm within ${STRIPE_POLL_TIMEOUT_MS / 60000} minutes`);
 }
 
 function sleep(ms) {

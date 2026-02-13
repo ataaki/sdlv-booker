@@ -1,21 +1,12 @@
 const { getToken } = require('./auth');
 const { getConfig, CLUB_ID } = require('./config-resolver');
-
-const API_BASE = 'https://api-v3.doinsport.club';
-const ACTIVITY_FOOTBALL_5V5 = 'cc4da804-1ef4-4f57-9fa4-4c203cdc06c8';
-const CATEGORY_FOOTBALL = '910503af-d67a-4f2b-a0df-838e0b4fb8ac';
-
-const PLAYGROUND_NAMES = ['Foot 1', 'Foot 2', 'Foot 3', 'Foot 4', 'Foot 5', 'Foot 6', 'Foot 7'];
-
-const PLAYGROUNDS = {
-  'Foot 1': 'b5a0b1d1-8272-4fd0-9618-ab878c08ec7e',
-  'Foot 2': 'a7724c1d-8a2f-4f43-906c-bc6ccefc2b4c',
-  'Foot 3': '0111e443-e79c-4fee-87d2-4ddc329e1f5b',
-  'Foot 4': '5fdabcc0-07a0-4ff9-93f5-bf5855eed3b3',
-  'Foot 5': '6bbe9dd0-7073-4fbe-bf41-a06425cb5a9f',
-  'Foot 6': '05e9bb22-5b63-4fd2-a720-db7715fe96a8',
-  'Foot 7': '282f45b9-5786-4f82-90d5-ef07d7eeeffb',
-};
+const {
+  API_BASE,
+  ACTIVITY_FOOTBALL_5V5,
+  CATEGORY_FOOTBALL,
+  PLAYGROUNDS,
+  PLAYGROUND_NAMES,
+} = require('../constants');
 
 async function authFetch(url, options = {}) {
   const token = await getToken();

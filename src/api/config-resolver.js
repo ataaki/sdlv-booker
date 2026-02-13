@@ -3,12 +3,7 @@
  * The user only needs to provide DOINSPORT_EMAIL and DOINSPORT_PASSWORD.
  */
 const { getToken } = require('./auth');
-
-const API_BASE = 'https://api-v3.doinsport.club';
-const CLUB_ID = '1ce2c55d-6010-4f45-9b6f-1aafc04382fa';
-
-// DoInSport platform Stripe publishable key (same for all clubs — public by design)
-const DOINSPORT_STRIPE_PK = 'pk_live_ASS1268VW0gTF0hTkEs9Cno1003DMFnhdw';
+const { API_BASE, CLUB_ID, DOINSPORT_STRIPE_PK } = require('../constants');
 
 let resolvedConfig = null;
 

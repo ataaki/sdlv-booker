@@ -1,13 +1,13 @@
 const cron = require('node-cron');
-const { getEnabledRules, createLog, getSetting, getCredentials } = require('../db/database');
-const { findBestSlot, createBooking, createPaymentCart, createPayment, confirmDoinsportPayment, hasBookingOnDate } = require('../api/doinsport');
-const { getMe } = require('../api/auth');
-const { confirmStripePayment } = require('../api/stripe-confirm');
-
-const DAY_NAMES = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+const { getEnabledRules, getSetting, getCredentials } = require('../db/database');
+const { DAY_NAMES, DEFAULT_BOOKING_ADVANCE_DAYS } = require('../constants');
+const { parsePlaygroundOrder } = require('../utils/json-helpers');
+const { findAndBookSlot, checkExistingBooking } = require('../services/booking');
+const { executePaymentFlow } = require('../services/payment');
+const { logSuccess, logFailure, logPaymentFailure, logNoSlots, logSkipped } = require('../services/logging');
 
 function getBookingAdvanceDays() {
-  return parseInt(getSetting('booking_advance_days', '45'));
+  return parseInt(getSetting('booking_advance_days', String(DEFAULT_BOOKING_ADVANCE_DAYS)));
 }
 
 /** Format a local Date as YYYY-MM-DD without UTC conversion */
@@ -18,14 +18,6 @@ function formatLocalDate(d) {
   return `${y}-${m}-${day}`;
 }
 
-let userInfo = null;
-
-async function getUserInfo() {
-  if (!userInfo) {
-    userInfo = await getMe();
-  }
-  return userInfo;
-}
 
 /**
  * Calculate the target date for a booking rule.
@@ -97,121 +89,102 @@ function getJ45Info(dayOfWeek) {
  * Execute a booking for a specific rule and date.
  */
 async function executeBooking(rule, targetDate) {
-  const log = {
-    rule_id: rule.id,
-    target_date: targetDate,
-    target_time: rule.target_time,
-    booked_time: null,
-    playground: null,
-    status: 'pending',
-    booking_id: null,
-    error_message: null,
-  };
-
   try {
     console.log(`[Scheduler] Attempting booking: ${DAY_NAMES[rule.day_of_week]} ${targetDate} at ${rule.target_time} (${rule.duration}min)`);
 
     // Check if there's already a booking on this date
-    const alreadyBooked = await hasBookingOnDate(targetDate);
+    const alreadyBooked = await checkExistingBooking(targetDate);
     if (alreadyBooked) {
-      log.status = 'skipped';
-      log.error_message = 'Reservation deja existante pour cette date';
-      createLog(log);
-      console.log(`[Scheduler] Skipped: already have a booking on ${targetDate}`);
-      return log;
+      logSkipped({
+        ruleId: rule.id,
+        targetDate,
+        targetTime: rule.target_time,
+        reason: 'Reservation deja existante pour cette date',
+      });
+      return { status: 'skipped' };
     }
 
     // Parse playground preferences
-    const playgroundOrder = rule.playground_order ? JSON.parse(rule.playground_order) : null;
+    const playgroundOrder = parsePlaygroundOrder(rule.playground_order);
 
-    // Find the best available slot
-    const best = await findBestSlot(targetDate, rule.target_time, rule.duration, playgroundOrder);
-
-    if (!best) {
-      log.status = 'no_slots';
-      log.error_message = 'Aucun créneau disponible';
-      createLog(log);
-      console.log(`[Scheduler] No slots available for ${targetDate} at ${rule.target_time}`);
-      return log;
-    }
-
-    console.log(`[Scheduler] Found slot: ${best.playground.name} at ${best.slot.startAt} (${best.price.pricePerParticipant/100} EUR/pers)`);
-
-    // Fill slot info now so logs are complete even if payment fails later
-    log.booked_time = best.slot.startAt;
-    log.playground = best.playground.name;
-
-    // Get user info for booking
-    const me = await getUserInfo();
-
-    // Create the booking (use dynamic price from API)
-    const booking = await createBooking({
-      playgroundId: best.playground.id,
-      priceId: best.price.id,
+    // Find the best available slot and create booking
+    const bookingResult = await findAndBookSlot({
       date: targetDate,
-      startTime: best.slot.startAt,
+      targetTime: rule.target_time,
       duration: rule.duration,
-      userId: me.id,
-      lastName: me.lastName,
-      pricePerParticipant: best.price.pricePerParticipant,
-      maxParticipants: best.price.participantCount,
+      playgroundOrder,
     });
 
-    const bookingId = booking.id || booking['@id']?.split('/').pop();
-
-    // Step 1: Create payment cart + payment
-    const cart = await createPaymentCart(bookingId, best.price.pricePerParticipant);
-    const cartId = cart.id || cart['@id']?.split('/').pop();
-
-    const { getConfig } = require('../api/config-resolver');
-    const { clubClientId } = getConfig();
-    const payment = await createPayment(cartId, best.price.pricePerParticipant, clubClientId, me.id);
-    const paymentId = payment.id || payment['@id']?.split('/').pop();
-    const clientSecret = payment.metadata?.clientSecret;
-    console.log(`[Scheduler] Payment created: ${paymentId}, status: ${payment.status}`);
-
-    // Step 2: Confirm via DoInSport API (attaches Stripe source)
-    const confirmed = await confirmDoinsportPayment(paymentId);
-    console.log(`[Scheduler] DoInSport confirm: ${confirmed.status}`);
-
-    // Step 3: Confirm via Stripe.js (handles 3DS frictionlessly)
-    if (confirmed.status !== 'succeeded') {
-      const secret = confirmed.metadata?.clientSecret || clientSecret;
-      if (!secret) {
-        log.status = 'payment_failed';
-        log.booking_id = bookingId;
-        log.error_message = 'No clientSecret in payment metadata';
-        createLog(log);
-        return log;
-      }
-
-      const stripeResult = await confirmStripePayment(secret);
-      console.log(`[Scheduler] Stripe.js confirm: ${stripeResult.status}`);
-
-      if (stripeResult.status !== 'succeeded') {
-        log.status = 'payment_failed';
-        log.booking_id = bookingId;
-        log.error_message = `Stripe payment status: ${stripeResult.status}`;
-        createLog(log);
-        return log;
-      }
+    if (!bookingResult) {
+      logNoSlots({
+        ruleId: rule.id,
+        targetDate,
+        targetTime: rule.target_time,
+      });
+      return { status: 'no_slots' };
     }
 
-    log.status = 'success';
-    log.booked_time = best.slot.startAt;
-    log.playground = best.playground.name;
-    log.booking_id = bookingId;
-    createLog(log);
+    const { bookingId, playground, slot, price, user } = bookingResult;
 
-    console.log(`[Scheduler] Booking successful! ${best.playground.name} at ${best.slot.startAt} on ${targetDate}`);
-    return log;
+    // Execute payment flow
+    try {
+      await executePaymentFlow({
+        bookingId,
+        price: price.pricePerParticipant,
+        userId: user.id,
+        context: 'scheduled booking',
+      });
+
+      // Payment succeeded - log success
+      logSuccess({
+        ruleId: rule.id,
+        targetDate,
+        targetTime: rule.target_time,
+        bookedTime: slot.startAt,
+        playground: playground.name,
+        bookingId,
+        price: price.pricePerParticipant,
+      });
+
+      return {
+        status: 'success',
+        bookingId,
+        playground: playground.name,
+        bookedTime: slot.startAt,
+      };
+
+    } catch (paymentErr) {
+      // Payment failed - log payment failure
+      logPaymentFailure({
+        ruleId: rule.id,
+        targetDate,
+        targetTime: rule.target_time,
+        bookedTime: slot.startAt,
+        playground: playground.name,
+        bookingId,
+        error: paymentErr,
+      });
+
+      return {
+        status: 'payment_failed',
+        bookingId,
+        error: paymentErr.message,
+      };
+    }
 
   } catch (err) {
-    log.status = 'failed';
-    log.error_message = err.message;
-    createLog(log);
-    console.error(`[Scheduler] Booking failed: ${err.message}`);
-    return log;
+    // General booking failure (slot finding, booking creation)
+    logFailure({
+      ruleId: rule.id,
+      targetDate,
+      targetTime: rule.target_time,
+      error: err,
+    });
+
+    return {
+      status: 'failed',
+      error: err.message,
+    };
   }
 }
 

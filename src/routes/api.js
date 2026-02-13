@@ -1,11 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/database');
-const { getPlanning, findAllSlots, findBestSlot, createBooking, createPaymentCart, createPayment, confirmDoinsportPayment, cancelBooking, getMyBookings, PLAYGROUNDS, PLAYGROUND_NAMES } = require('../api/doinsport');
+const { getPlanning, findAllSlots, findBestSlot, cancelBooking, getMyBookings, PLAYGROUNDS, PLAYGROUND_NAMES } = require('../api/doinsport');
 const { login, getMe, resetToken } = require('../api/auth');
-const { confirmStripePayment } = require('../api/stripe-confirm');
 const { executeBooking, getNextDateForDay, getJ45Info, DAY_NAMES, getBookingAdvanceDays } = require('../scheduler/scheduler');
 const { resolveConfig, resetConfig } = require('../api/config-resolver');
+const { VALID_DURATIONS } = require('../constants');
+const { parsePlaygroundOrder } = require('../utils/json-helpers');
+const { validateTimeFormat, validateDuration, validateBookingRule, validateBookingAdvanceDays } = require('../utils/validators');
+const { errorHandler, validationError, notFoundError } = require('../middleware/error-handler');
+const { findAndBookSlot } = require('../services/booking');
+const { executePaymentFlow } = require('../services/payment');
+const { logSuccess, logPaymentFailure, logCancellation } = require('../services/logging');
 
 // --- Credentials ---
 
@@ -52,30 +58,24 @@ router.get('/rules', (req, res) => {
 router.post('/rules', (req, res) => {
   const { day_of_week, target_time, duration, playground_order } = req.body;
 
-  if (day_of_week === undefined || !target_time) {
-    return res.status(400).json({ error: 'day_of_week and target_time are required' });
+  // Validate using centralized validators
+  const errors = validateBookingRule({ day_of_week, target_time, duration });
+  if (errors.length > 0) {
+    return validationError(res, errors[0]);
   }
 
-  if (day_of_week < 0 || day_of_week > 6) {
-    return res.status(400).json({ error: 'day_of_week must be 0-6 (0=Dimanche)' });
-  }
-
-  if (!/^\d{2}:\d{2}$/.test(target_time)) {
-    return res.status(400).json({ error: 'target_time must be HH:MM format' });
-  }
-
-  const validDurations = [60, 90, 120];
-  if (duration && !validDurations.includes(duration)) {
-    return res.status(400).json({ error: 'duration must be 60, 90, or 120' });
-  }
-
-  const rule = db.createRule({ day_of_week, target_time, duration: duration || 60, playground_order: playground_order || null });
+  const rule = db.createRule({
+    day_of_week,
+    target_time,
+    duration: duration || 60,
+    playground_order: playground_order || null
+  });
   res.status(201).json(rule);
 });
 
 router.put('/rules/:id', (req, res) => {
   const rule = db.getRuleById(req.params.id);
-  if (!rule) return res.status(404).json({ error: 'Rule not found' });
+  if (!rule) return notFoundError(res, 'Rule');
 
   const updated = db.updateRule(req.params.id, req.body);
   res.json(updated);
@@ -83,7 +83,7 @@ router.put('/rules/:id', (req, res) => {
 
 router.delete('/rules/:id', (req, res) => {
   const rule = db.getRuleById(req.params.id);
-  if (!rule) return res.status(404).json({ error: 'Rule not found' });
+  if (!rule) return notFoundError(res, 'Rule');
 
   db.deleteRule(req.params.id);
   res.json({ success: true });
@@ -117,11 +117,11 @@ router.get('/settings', (req, res) => {
 router.put('/settings', (req, res) => {
   const { booking_advance_days } = req.body;
   if (booking_advance_days !== undefined) {
-    const val = parseInt(booking_advance_days);
-    if (isNaN(val) || val < 1 || val > 90) {
-      return res.status(400).json({ error: 'booking_advance_days doit être entre 1 et 90' });
+    const error = validateBookingAdvanceDays(booking_advance_days);
+    if (error) {
+      return validationError(res, error);
     }
-    db.setSetting('booking_advance_days', val);
+    db.setSetting('booking_advance_days', parseInt(booking_advance_days));
   }
   res.json({ success: true, booking_advance_days: parseInt(db.getSetting('booking_advance_days', '45')) });
 });
@@ -195,21 +195,17 @@ router.delete('/bookings/:id', async (req, res) => {
 
     // Log the cancellation
     if (date) {
-      db.createLog({
-        rule_id: null,
-        target_date: date,
-        target_time: time || '-',
-        booked_time: time || null,
-        playground: playground || null,
-        status: 'cancelled',
-        booking_id: req.params.id,
-        error_message: null,
+      logCancellation({
+        targetDate: date,
+        targetTime: time,
+        playground,
+        bookingId: req.params.id,
       });
     }
 
     res.json({ success: true, message: 'Reservation annulee (remboursement automatique si paiement effectue)' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return errorHandler(err, res, 500);
   }
 });
 
@@ -258,21 +254,33 @@ router.post('/book-manual', async (req, res) => {
   try {
     const { date, startTime, duration, playgroundName } = req.body;
 
+    // Validate required fields
     if (!date || !startTime || !playgroundName) {
-      return res.status(400).json({ error: 'date, startTime, and playgroundName are required' });
+      return validationError(res, 'date, startTime, and playgroundName are required');
     }
 
+    // Validate duration
     const dur = parseInt(duration) || 60;
-    const playgroundId = PLAYGROUNDS[playgroundName];
-    if (!playgroundId) return res.status(400).json({ error: `Unknown playground: ${playgroundName}` });
+    const durationError = validateDuration(dur);
+    if (durationError) {
+      return validationError(res, durationError);
+    }
+
+    // Validate playground exists
+    if (!PLAYGROUNDS[playgroundName]) {
+      return validationError(res, `Unknown playground: ${playgroundName}`);
+    }
 
     // Find the exact slot to get the correct price
     const slots = await findAllSlots(date, dur);
     const match = slots.find(s => s.slot.startAt === startTime && s.playground.name === playgroundName);
-    if (!match) return res.status(400).json({ error: 'Creneau non disponible' });
+    if (!match) {
+      return validationError(res, 'Créneau non disponible');
+    }
 
+    // Create booking using service
     const me = await getMe();
-
+    const { createBooking } = require('../api/doinsport');
     const booking = await createBooking({
       playgroundId: match.playground.id,
       priceId: match.price.id,
@@ -285,68 +293,56 @@ router.post('/book-manual', async (req, res) => {
       maxParticipants: match.price.participantCount,
     });
 
-    const bookingId = booking.id || booking['@id']?.split('/').pop();
+    const { extractIdOrThrow } = require('../utils/id-helpers');
+    const bookingId = extractIdOrThrow(booking, 'booking');
 
-    // Step 1: Create payment cart + payment
-    const cart = await createPaymentCart(bookingId, match.price.pricePerParticipant);
-    const cartId = cart.id || cart['@id']?.split('/').pop();
+    // Execute payment flow using service (eliminates 37 lines of duplication)
+    try {
+      await executePaymentFlow({
+        bookingId,
+        price: match.price.pricePerParticipant,
+        userId: me.id,
+        context: 'manual booking',
+      });
 
-    const { getConfig } = require('../api/config-resolver');
-    const { clubClientId } = getConfig();
-    const payment = await createPayment(cartId, match.price.pricePerParticipant, clubClientId, me.id);
-    const paymentId = payment.id || payment['@id']?.split('/').pop();
+      // Log success
+      logSuccess({
+        ruleId: null,
+        targetDate: date,
+        targetTime: startTime,
+        bookedTime: startTime,
+        playground: playgroundName,
+        bookingId,
+        price: match.price.pricePerParticipant,
+      });
 
-    // Step 2: Confirm via DoInSport API
-    const confirmed = await confirmDoinsportPayment(paymentId);
+      res.json({
+        status: 'success',
+        target_date: date,
+        booked_time: startTime,
+        playground: playgroundName,
+        booking_id: bookingId,
+        price: match.price.pricePerParticipant,
+        confirmed: true,
+      });
 
-    // Step 3: Confirm via Stripe.js if needed
-    if (confirmed.status !== 'succeeded') {
-      const clientSecret = confirmed.metadata?.clientSecret || payment.metadata?.clientSecret;
-      if (!clientSecret) {
-        db.createLog({
-          rule_id: null, target_date: date, target_time: startTime,
-          booked_time: startTime, playground: playgroundName,
-          status: 'payment_failed', booking_id: bookingId,
-          error_message: 'No clientSecret in payment metadata',
-        });
-        return res.status(500).json({ error: 'Payment failed: no clientSecret', booking_id: bookingId });
-      }
+    } catch (paymentErr) {
+      // Log payment failure
+      logPaymentFailure({
+        ruleId: null,
+        targetDate: date,
+        targetTime: startTime,
+        bookedTime: startTime,
+        playground: playgroundName,
+        bookingId,
+        error: paymentErr,
+      });
 
-      const stripeResult = await confirmStripePayment(clientSecret);
-      if (stripeResult.status !== 'succeeded') {
-        db.createLog({
-          rule_id: null, target_date: date, target_time: startTime,
-          booked_time: startTime, playground: playgroundName,
-          status: 'payment_failed', booking_id: bookingId,
-          error_message: `Stripe payment status: ${stripeResult.status}`,
-        });
-        return res.status(500).json({ error: `Payment failed: ${stripeResult.status}`, booking_id: bookingId });
-      }
+      return errorHandler(paymentErr, res, 500);
     }
 
-    // Log the manual booking
-    db.createLog({
-      rule_id: null,
-      target_date: date,
-      target_time: startTime,
-      booked_time: startTime,
-      playground: playgroundName,
-      status: 'success',
-      booking_id: bookingId,
-      error_message: null,
-    });
-
-    res.json({
-      status: 'success',
-      target_date: date,
-      booked_time: startTime,
-      playground: playgroundName,
-      booking_id: bookingId,
-      price: match.price.pricePerParticipant,
-      confirmed: true,
-    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return errorHandler(err, res, 500);
   }
 });
 
@@ -359,7 +355,7 @@ router.get('/dashboard', (req, res) => {
   // Calculate J-45 info for each rule
   const rulesWithInfo = rules.map(rule => ({
     ...rule,
-    playground_order: rule.playground_order ? JSON.parse(rule.playground_order) : null,
+    playground_order: parsePlaygroundOrder(rule.playground_order),
     day_name: DAY_NAMES[rule.day_of_week],
     j45: getJ45Info(rule.day_of_week),
     duration_label: `${rule.duration} min`,
@@ -374,7 +370,7 @@ router.get('/dashboard', (req, res) => {
       advance_days: getBookingAdvanceDays(),
       playgrounds: PLAYGROUNDS,
       playground_names: PLAYGROUND_NAMES,
-      durations: [60, 90, 120],
+      durations: VALID_DURATIONS,
       day_names: DAY_NAMES,
     },
   });
