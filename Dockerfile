@@ -96,9 +96,11 @@ RUN mkdir -p data
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD node -e "require('http').get('http://localhost:3000/api/credentials/status', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
-# Create non-root user for security
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-USER appuser
+# Change ownership to node user (already exists in node:20-slim with UID 1000)
+RUN chown -R node:node /app
+
+# Run as non-root user for security
+USER node
 
 EXPOSE 3000
 

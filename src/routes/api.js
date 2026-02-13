@@ -181,10 +181,39 @@ router.post('/book-now', async (req, res) => {
 
 router.get('/bookings', async (req, res) => {
   try {
-    const bookings = await getMyBookings();
-    res.json(bookings);
+    const {
+      status = 'upcoming',
+      limit = '20',
+      page = '1',
+      includeCanceled = 'false',
+    } = req.query;
+
+    // Validate status
+    const validStatuses = ['upcoming', 'past', 'all'];
+    if (!validStatuses.includes(status)) {
+      return validationError(res, `status must be one of: ${validStatuses.join(', ')}`);
+    }
+
+    // Validate pagination
+    const limitNum = parseInt(limit);
+    const pageNum = parseInt(page);
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
+      return validationError(res, 'limit must be between 1 and 100');
+    }
+    if (isNaN(pageNum) || pageNum < 1) {
+      return validationError(res, 'page must be >= 1');
+    }
+
+    const result = await getMyBookings({
+      status,
+      limit: limitNum,
+      page: pageNum,
+      includeCanceled: includeCanceled === 'true',
+    });
+
+    res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return errorHandler(err, res, 500);
   }
 });
 

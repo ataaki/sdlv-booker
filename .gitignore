@@ -12,3 +12,5 @@ nul
 # IDE & tools
 .claude/
 .playwright-mcp/
+test-bookings-spinner.js
+*.png

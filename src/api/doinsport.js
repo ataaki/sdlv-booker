@@ -298,20 +298,61 @@ async function cancelBooking(bookingId) {
 }
 
 /**
- * Get existing bookings from the DoInSport API.
- * Returns upcoming non-canceled bookings.
+ * Get existing bookings from the DoInSport API with pagination and filtering.
+ *
+ * @param {object} options - Query options
+ * @param {string} [options.status='upcoming'] - Filter: 'upcoming', 'past', or 'all'
+ * @param {number} [options.limit=20] - Number of results per page
+ * @param {number} [options.page=1] - Page number (1-based)
+ * @param {boolean} [options.includeCanceled=false] - Include canceled bookings
+ * @returns {Promise<object>} { bookings, total, page, limit, hasMore }
  */
-async function getMyBookings() {
+async function getMyBookings(options = {}) {
+  const {
+    status = 'upcoming',
+    limit = 20,
+    page = 1,
+    includeCanceled = false,
+  } = options;
+
   const today = new Date().toISOString().split('T')[0];
-  const url = `${API_BASE}/clubs/bookings?club.id=${CLUB_ID}&canceled=false&startAt[after]=${today}&order[startAt]=asc&itemsPerPage=50`;
+
+  // Build query parameters
+  const params = new URLSearchParams({
+    'club.id': CLUB_ID,
+    'itemsPerPage': String(limit),
+    'page': String(page),
+  });
+
+  // Filter by canceled status
+  if (!includeCanceled) {
+    params.append('canceled', 'false');
+  }
+
+  // Filter by date based on status
+  if (status === 'upcoming') {
+    params.append('startAt[after]', today);
+    params.append('order[startAt]', 'asc');
+  } else if (status === 'past') {
+    params.append('startAt[before]', today);
+    params.append('order[startAt]', 'desc');
+  } else {
+    // 'all' - sort by date descending (most recent first)
+    params.append('order[startAt]', 'desc');
+  }
+
+  const url = `${API_BASE}/clubs/bookings?${params.toString()}`;
   const res = await authFetch(url);
+
   if (!res.ok) {
     throw new Error(`getMyBookings failed: ${res.status}`);
   }
+
   const data = await res.json();
   const members = data['hydra:member'] || [];
+  const totalItems = data['hydra:totalItems'] || 0;
 
-  return members.map(b => ({
+  const bookings = members.map(b => ({
     id: b.id,
     date: b.startAt ? b.startAt.split('T')[0] : null,
     startAt: b.startAt,
@@ -328,13 +369,22 @@ async function getMyBookings() {
     createdAt: b.createdAt,
     restToPay: b.restToPay,
   }));
+
+  return {
+    bookings,
+    total: totalItems,
+    page,
+    limit,
+    hasMore: totalItems > page * limit,
+    totalPages: Math.ceil(totalItems / limit),
+  };
 }
 
 /**
  * Check if there's already a booking on a given date.
  */
 async function hasBookingOnDate(date) {
-  const bookings = await getMyBookings();
+  const { bookings } = await getMyBookings({ status: 'all', limit: 100 });
   return bookings.some(b => b.date === date);
 }
 

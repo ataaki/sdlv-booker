@@ -147,20 +147,101 @@ async function loadDashboard() {
   }
 }
 
-async function loadBookings() {
+// Global state for bookings pagination
+let currentBookingsStatus = 'upcoming';
+let currentBookingsPage = 1;
+
+async function loadBookings(status = currentBookingsStatus, page = 1) {
+  currentBookingsStatus = status;
+  currentBookingsPage = page;
+
   const btn = document.getElementById('btn-refresh-bookings');
-  btnLoading(btn, true);
+  const container = document.getElementById('bookings-list');
+
+  if (btn) btnLoading(btn, true);
+
+  // Show loading spinner in the bookings list
+  container.innerHTML = `
+    <div class="section-loading" style="padding: 60px 20px;">
+      <div class="section-spinner"></div>
+      <p style="margin-top: 16px; color: var(--text-muted);">
+        Chargement des réservations ${status === 'past' ? 'passées' : 'à venir'}...
+      </p>
+    </div>
+  `;
+
   try {
-    const bookings = await apiGet('/bookings');
-    renderBookings(bookings);
-    document.getElementById('stat-upcoming').textContent = bookings.length;
+    const result = await apiGet(`/bookings?status=${status}&page=${page}&limit=20`);
+    renderBookings(result, status, page);
+
+    // Update stat counter (only for upcoming)
+    if (status === 'upcoming') {
+      document.getElementById('stat-upcoming').textContent = result.total || 0;
+    }
   } catch (err) {
     console.error('Failed to load bookings:', err);
-    document.getElementById('bookings-list').innerHTML =
+    container.innerHTML =
       '<p class="empty-state">Erreur de chargement des réservations.</p>';
   } finally {
-    btnLoading(btn, false);
+    if (btn) btnLoading(btn, false);
   }
+}
+
+function switchBookingsTab(status) {
+  loadBookings(status, 1);
+}
+
+function generatePageNumbers(currentPage, totalPages, status) {
+  const pages = [];
+  const maxVisible = 7; // Nombre max de numéros visibles
+
+  if (totalPages <= maxVisible) {
+    // Afficher tous les numéros si peu de pages
+    for (let i = 1; i <= totalPages; i++) {
+      pages.push(i);
+    }
+  } else {
+    // Logique pour afficher les pages avec "..."
+    const leftSiblings = 2;
+    const rightSiblings = 2;
+
+    // Toujours afficher la première page
+    pages.push(1);
+
+    // Calculer la plage autour de la page actuelle
+    const startPage = Math.max(2, currentPage - leftSiblings);
+    const endPage = Math.min(totalPages - 1, currentPage + rightSiblings);
+
+    // Ajouter "..." si nécessaire avant
+    if (startPage > 2) {
+      pages.push('...');
+    }
+
+    // Ajouter les pages du milieu
+    for (let i = startPage; i <= endPage; i++) {
+      pages.push(i);
+    }
+
+    // Ajouter "..." si nécessaire après
+    if (endPage < totalPages - 1) {
+      pages.push('...');
+    }
+
+    // Toujours afficher la dernière page
+    if (totalPages > 1) {
+      pages.push(totalPages);
+    }
+  }
+
+  return pages.map(p => {
+    if (p === '...') {
+      return '<span class="pagination-ellipsis">...</span>';
+    } else if (p === currentPage) {
+      return `<button class="pagination-number active" disabled>${p}</button>`;
+    } else {
+      return `<button class="pagination-number" onclick="loadBookings('${status}', ${p})">${p}</button>`;
+    }
+  }).join('');
 }
 
 function renderStats(data) {
@@ -538,15 +619,82 @@ async function bookSlot(date, startTime, duration, playgroundName, btnEl) {
 
 // ===== BOOKINGS (LIVE) =====
 
-function renderBookings(bookings) {
+function renderBookings(result, status, page) {
   const container = document.getElementById('bookings-list');
+  const bookings = result.bookings || [];
+  const total = result.total || 0;
+  const totalPages = result.totalPages || 1;
+  const hasMore = result.hasMore || false;
+
+  // Render tabs
+  const tabsHtml = `
+    <div class="bookings-tabs">
+      <button class="tab-btn ${status === 'upcoming' ? 'active' : ''}" onclick="switchBookingsTab('upcoming')">
+        À venir
+      </button>
+      <button class="tab-btn ${status === 'past' ? 'active' : ''}" onclick="switchBookingsTab('past')">
+        Passées
+      </button>
+    </div>
+  `;
 
   if (!bookings || bookings.length === 0) {
-    container.innerHTML = '<p class="empty-state">Aucune réservation à venir.</p>';
+    const emptyMessage = status === 'upcoming'
+      ? 'Aucune réservation à venir.'
+      : 'Aucune réservation passée.';
+    container.innerHTML = tabsHtml + `<p class="empty-state">${emptyMessage}</p>`;
     return;
   }
 
-  container.innerHTML = `
+  // Pagination info
+  const paginationInfo = `
+    <div class="pagination-info">
+      Page ${page} / ${totalPages} • ${total} réservation${total > 1 ? 's' : ''}
+    </div>
+  `;
+
+  // Pagination controls with page numbers
+  const paginationControls = totalPages > 1 ? `
+    <div class="pagination-controls">
+      <button
+        class="btn btn-secondary btn-sm"
+        ${page === 1 ? 'disabled' : ''}
+        onclick="loadBookings('${status}', 1)"
+        title="Première page"
+      >
+        ⏮
+      </button>
+      <button
+        class="btn btn-secondary btn-sm"
+        ${page === 1 ? 'disabled' : ''}
+        onclick="loadBookings('${status}', ${page - 1})"
+      >
+        ← Précédent
+      </button>
+
+      <div class="pagination-numbers">
+        ${generatePageNumbers(page, totalPages, status)}
+      </div>
+
+      <button
+        class="btn btn-secondary btn-sm"
+        ${!hasMore ? 'disabled' : ''}
+        onclick="loadBookings('${status}', ${page + 1})"
+      >
+        Suivant →
+      </button>
+      <button
+        class="btn btn-secondary btn-sm"
+        ${page === totalPages ? 'disabled' : ''}
+        onclick="loadBookings('${status}', ${totalPages})"
+        title="Dernière page"
+      >
+        ⏭
+      </button>
+    </div>
+  ` : '';
+
+  container.innerHTML = tabsHtml + paginationInfo + `
     <table class="logs-table">
       <thead>
         <tr>
@@ -555,7 +703,7 @@ function renderBookings(bookings) {
           <th>Terrain</th>
           <th>Prix</th>
           <th>Statut</th>
-          <th></th>
+          ${status === 'upcoming' ? '<th></th>' : ''}
         </tr>
       </thead>
       <tbody>
@@ -564,25 +712,38 @@ function renderBookings(bookings) {
           const startTime = b.startAt ? new Date(b.startAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '-';
           const endTime = b.endAt ? new Date(b.endAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '-';
           const priceStr = b.pricePerParticipant ? (b.pricePerParticipant / 100).toFixed(2) + ' EUR' : '-';
-          const statusBadge = b.confirmed
-            ? '<span class="badge badge-success">Confirmée</span>'
-            : '<span class="badge badge-pending">Non confirmée</span>';
+
+          let statusBadge;
+          if (b.canceled) {
+            statusBadge = '<span class="badge badge-error">Annulée</span>';
+          } else if (b.confirmed) {
+            statusBadge = '<span class="badge badge-success">Confirmée</span>';
+          } else {
+            statusBadge = '<span class="badge badge-pending">Non confirmée</span>';
+          }
+
           const bookingId = b.id.replace(/'/g, "\\'");
           const pgName = (b.playground || '-').replace(/'/g, "\\'");
+
+          // Only show cancel button for upcoming bookings
+          const actionCell = status === 'upcoming' && !b.canceled
+            ? `<td><button class="btn btn-danger btn-sm" onclick="cancelBooking('${bookingId}', '${b.date}', '${startTime}', '${pgName}', this)">Annuler</button></td>`
+            : '';
+
           return `
-            <tr>
+            <tr${b.canceled ? ' class="booking-canceled"' : ''}>
               <td><strong>${dateStr}</strong></td>
               <td>${startTime} - ${endTime}</td>
               <td>${b.playground || '-'}</td>
               <td>${priceStr}/pers</td>
               <td>${statusBadge}</td>
-              <td><button class="btn btn-danger btn-sm" onclick="cancelBooking('${bookingId}', '${b.date}', '${startTime}', '${pgName}', this)">Annuler</button></td>
+              ${actionCell}
             </tr>
           `;
         }).join('')}
       </tbody>
     </table>
-  `;
+  ` + paginationControls;
 }
 
 async function cancelBooking(bookingId, date, time, playground, btnEl) {
