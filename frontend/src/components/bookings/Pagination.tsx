@@ -13,8 +13,8 @@ export default function Pagination({ page, totalPages, onPageChange }: Paginatio
 
   return (
     <div className="flex items-center justify-center gap-2 mt-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg flex-wrap sm:gap-3">
-      <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => onPageChange(1)}>⏮</Button>
-      <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => onPageChange(page - 1)}>← Préc</Button>
+      <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => onPageChange(1)}>Premier</Button>
+      <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => onPageChange(page - 1)}>Prec</Button>
 
       <div className="flex items-center gap-1 mx-3 order-3 w-full justify-center my-2 sm:order-none sm:w-auto sm:my-0">
         {pages.map((p, i) =>
@@ -37,8 +37,8 @@ export default function Pagination({ page, totalPages, onPageChange }: Paginatio
         )}
       </div>
 
-      <Button variant="secondary" size="sm" disabled={page === totalPages} onClick={() => onPageChange(page + 1)}>Suiv →</Button>
-      <Button variant="secondary" size="sm" disabled={page === totalPages} onClick={() => onPageChange(totalPages)}>⏭</Button>
+      <Button variant="secondary" size="sm" disabled={page === totalPages} onClick={() => onPageChange(page + 1)}>Suiv</Button>
+      <Button variant="secondary" size="sm" disabled={page === totalPages} onClick={() => onPageChange(totalPages)}>Dernier</Button>
     </div>
   )
 }
