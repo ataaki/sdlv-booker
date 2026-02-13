@@ -7,6 +7,10 @@
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 }
 
+body {
+  padding-top: env(safe-area-inset-top);
+}
+
 select {
   appearance: none;
   -webkit-appearance: none;
