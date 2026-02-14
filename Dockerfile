@@ -49,27 +49,9 @@ WORKDIR /app
 COPY --from=builder /build/node_modules ./node_modules
 COPY package.json ./
 
-# Install minimal Playwright runtime dependencies, Chromium, and clean up (Optimization #4 & #5)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libnss3 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    libgbm1 \
-    libpango-1.0-0 \
-    libcairo2 \
-    libxshmfence1 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libasound2 \
-    fonts-liberation \
-    && rm -rf /var/lib/apt/lists/* && \
-    # Install Playwright Chromium
-    npx playwright install chromium && \
-    # Clean Playwright cache and temporary files (Optimization #1)
+# Install Playwright Chromium with all required system dependencies
+RUN npx playwright install --with-deps chromium && \
+    rm -rf /var/lib/apt/lists/* && \
     rm -rf /root/.cache/ms-playwright-tmp 2>/dev/null || true && \
     rm -rf /root/.npm 2>/dev/null || true
 
@@ -84,35 +66,20 @@ ARG PGID=1000
 
 WORKDIR /app
 
-# Install minimal runtime dependencies and setup in one layer (Optimization #4 & #5)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libnss3 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    libgbm1 \
-    libpango-1.0-0 \
-    libcairo2 \
-    libxshmfence1 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libasound2 \
-    fonts-liberation \
-    && rm -rf /var/lib/apt/lists/* \
-    # Remove unnecessary locale data to save space (Optimization #3)
-    && find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en*' ! -name 'fr*' -exec rm -rf {} + 2>/dev/null || true \
-    && find /usr/share/doc -mindepth 1 -exec rm -rf {} + 2>/dev/null || true \
-    && find /usr/share/man -mindepth 1 -exec rm -rf {} + 2>/dev/null || true
-
 # Copy production-ready node_modules and Playwright browser from previous stages
 COPY --from=playwright-builder /app/node_modules ./node_modules
 COPY --from=playwright-builder /root/.cache/ms-playwright /home/node/.cache/ms-playwright
+COPY package.json package-lock.json ./
+
+# Install Playwright system dependencies and clean up
+RUN npx playwright install-deps chromium && \
+    rm -rf /var/lib/apt/lists/* \
+    && find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en*' ! -name 'fr*' -exec rm -rf {} + 2>/dev/null || true \
+    && find /usr/share/doc -mindepth 1 -exec rm -rf {} + 2>/dev/null || true \
+    && find /usr/share/man -mindepth 1 -exec rm -rf {} + 2>/dev/null || true \
+    && rm -rf /root/.npm 2>/dev/null || true
 
 # Copy application code
-COPY package.json package-lock.json ./
 COPY src/ src/
 # Copy built frontend (from React build) + preserved static files
 COPY --from=frontend-builder /app/public/ public/
