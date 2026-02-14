@@ -50,6 +50,7 @@ export default function App() {
   const [settingsEmail, setSettingsEmail] = useState('')
   const [settingsPassword, setSettingsPassword] = useState('')
   const [settingsSaving, setSettingsSaving] = useState(false)
+  const [settingsTimezone, setSettingsTimezone] = useState('Europe/Paris')
   const [settingsTelegramToken, setSettingsTelegramToken] = useState('')
   const [settingsTelegramChatId, setSettingsTelegramChatId] = useState('')
   const [telegramTesting, setTelegramTesting] = useState(false)
@@ -232,9 +233,11 @@ export default function App() {
     setSettingsOpen(true)
     try {
       const settings = await api.get<{
+        timezone: string
         telegram_bot_token: string
         telegram_chat_id: string
       }>('/settings')
+      setSettingsTimezone(settings.timezone || 'Europe/Paris')
       setSettingsTelegramChatId(settings.telegram_chat_id || '')
     } catch {
       // ignore — fields stay empty
@@ -254,9 +257,12 @@ export default function App() {
         setCredentialsEmail(settingsEmail)
       }
 
-      const telegramPayload: Record<string, string> = { telegram_chat_id: settingsTelegramChatId }
-      if (settingsTelegramToken) telegramPayload.telegram_bot_token = settingsTelegramToken
-      await api.put('/settings', telegramPayload)
+      const settingsPayload: Record<string, string> = {
+        timezone: settingsTimezone,
+        telegram_chat_id: settingsTelegramChatId,
+      }
+      if (settingsTelegramToken) settingsPayload.telegram_bot_token = settingsTelegramToken
+      await api.put('/settings', settingsPayload)
 
       toast('success', 'Paramètres enregistrés')
       setSettingsOpen(false)
@@ -266,7 +272,7 @@ export default function App() {
     } finally {
       setSettingsSaving(false)
     }
-  }, [settingsEmail, settingsPassword, settingsTelegramToken, settingsTelegramChatId, dashboard, toast])
+  }, [settingsEmail, settingsPassword, settingsTimezone, settingsTelegramToken, settingsTelegramChatId, dashboard, toast])
 
   const handleTelegramTest = useCallback(async () => {
     setTelegramTesting(true)
@@ -517,6 +523,18 @@ export default function App() {
                   placeholder="Mot de passe DoInSport"
                   className="w-full px-3 py-2.5 border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg text-base min-h-12 sm:text-sm sm:min-h-0 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
                 />
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Fuseau horaire du serveur</label>
+                <input
+                  type="text"
+                  value={settingsTimezone}
+                  onChange={(e) => setSettingsTimezone(e.target.value)}
+                  placeholder="Europe/Paris"
+                  className="w-full px-3 py-2.5 border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg text-base min-h-12 sm:text-sm sm:min-h-0 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">Ex: Europe/Paris, America/New_York, Asia/Tokyo</p>
               </div>
 
               <div className="border-t border-slate-200 dark:border-slate-700 pt-4 mt-4">

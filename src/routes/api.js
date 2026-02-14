@@ -115,6 +115,7 @@ router.get('/settings', (req, res) => {
   const maskedToken = token ? '****' + token.slice(-4) : '';
   res.json({
     booking_advance_days: parseInt(db.getSetting('booking_advance_days', '45')),
+    timezone: db.getSetting('timezone', 'Europe/Paris'),
     telegram_bot_token: maskedToken,
     telegram_chat_id: db.getSetting('telegram_chat_id', ''),
   });
@@ -137,6 +138,17 @@ router.put('/settings', (req, res) => {
     db.setSetting('telegram_chat_id', telegram_chat_id.trim());
   }
 
+  if (req.body.timezone !== undefined) {
+    const tz = req.body.timezone.trim();
+    try {
+      Intl.DateTimeFormat(undefined, { timeZone: tz });
+      db.setSetting('timezone', tz);
+      process.env.TZ = tz;
+    } catch {
+      return validationError(res, `Fuseau horaire invalide : ${tz}`);
+    }
+  }
+
   res.json({ success: true });
 });
 
@@ -152,7 +164,7 @@ router.post('/telegram/test', async (req, res) => {
 // --- Server Time ---
 
 router.get('/time', (req, res) => {
-  res.json({ time: new Date().toISOString() });
+  res.json({ time: new Date().toISOString(), timezone: process.env.TZ || 'Europe/Paris' });
 });
 
 // --- Planning / Preview ---
@@ -426,6 +438,7 @@ router.get('/dashboard', (req, res) => {
     credentials_configured: !!creds,
     config: {
       advance_days: getBookingAdvanceDays(),
+      timezone: process.env.TZ || 'Europe/Paris',
       playgrounds: PLAYGROUNDS,
       playground_names: PLAYGROUND_NAMES,
       durations: VALID_DURATIONS,

@@ -6,7 +6,10 @@ const path = require('path');
 const apiRoutes = require('./routes/api');
 const { startScheduler } = require('./scheduler/scheduler');
 const { resolveConfig } = require('./api/config-resolver');
-const { getCredentials } = require('./db/database');
+const { getCredentials, getSetting } = require('./db/database');
+
+// Set timezone from DB (defaults to Europe/Paris)
+process.env.TZ = getSetting('timezone', 'Europe/Paris');
 
 const app = express();
 const PORT = process.env.PORT || 3000;

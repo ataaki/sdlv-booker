@@ -28,6 +28,7 @@ export interface DashboardData {
 
 export interface DashboardConfig {
   advance_days: number
+  timezone: string
   playgrounds: Record<string, string>
   playground_names: string[]
   durations: number[]

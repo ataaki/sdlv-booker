@@ -63,6 +63,10 @@ function initSchema() {
   if (!existing) {
     db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('booking_advance_days', '45');
   }
+  const existingTz = db.prepare('SELECT value FROM settings WHERE key = ?').get('timezone');
+  if (!existingTz) {
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('timezone', 'Europe/Paris');
+  }
 }
 
 // --- Booking Rules ---
@@ -107,7 +111,9 @@ function updateRule(id, { day_of_week, target_time, trigger_time, duration, enab
 }
 
 function deleteRule(id) {
-  return getDb().prepare('DELETE FROM booking_rules WHERE id = ?').run(id);
+  const d = getDb();
+  d.prepare('UPDATE booking_logs SET rule_id = NULL WHERE rule_id = ?').run(id);
+  return d.prepare('DELETE FROM booking_rules WHERE id = ?').run(id);
 }
 
 // --- Booking Logs ---
