@@ -1,19 +1,21 @@
 import { DAY_NAMES_SHORT } from '../../lib/constants'
 import { formatDate, formatDuration } from '../../lib/format'
-import type { Rule } from '../../types'
+import type { Rule, RetryQueueEntry } from '../../types'
 import Button from '../ui/Button'
 import Toggle from '../ui/Toggle'
 
 interface RuleCardProps {
   rule: Rule
+  activeRetry?: RetryQueueEntry | null
   onEdit: (id: number) => void
   onDelete: (id: number) => void
   onToggle: (id: number, enabled: boolean) => void
   onBookNow: (id: number, date: string) => void
+  onCancelRetry?: (retryId: number) => void
   bookingLoading?: boolean
 }
 
-export default function RuleCard({ rule, onEdit, onDelete, onToggle, onBookNow, bookingLoading }: RuleCardProps) {
+export default function RuleCard({ rule, activeRetry, onEdit, onDelete, onToggle, onBookNow, onCancelRetry, bookingLoading }: RuleCardProps) {
   const pgLabel = rule.playground_order?.length ? rule.playground_order.join(', ') : 'Aucune préférence'
 
   const j45 = rule.j45
@@ -70,6 +72,29 @@ export default function RuleCard({ rule, onEdit, onDelete, onToggle, onBookNow, 
       <div className="bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-700 px-4 py-2 text-xs text-slate-500">
         {j45Label}
       </div>
+      {activeRetry && (
+        <div className="bg-amber-50 dark:bg-amber-500/10 border-t border-amber-200 dark:border-amber-500/20 px-4 py-2 flex items-center justify-between">
+          <span className="text-xs text-amber-700 dark:text-amber-400 font-medium">
+            Retry en cours — tentative {activeRetry.total_attempts + 1}
+            {activeRetry.retry_config[activeRetry.current_step]?.count > 0
+              ? `/${activeRetry.retry_config[activeRetry.current_step].count}`
+              : ''
+            }
+            {activeRetry.retry_config.length > 1
+              ? ` (\u00e9tape ${activeRetry.current_step + 1}/${activeRetry.retry_config.length})`
+              : ''
+            }
+          </span>
+          {onCancelRetry && (
+            <button
+              onClick={() => onCancelRetry(activeRetry.id)}
+              className="text-xs text-amber-600 dark:text-amber-400 hover:text-red-500 font-medium transition-colors"
+            >
+              Annuler
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
