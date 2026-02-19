@@ -51,6 +51,14 @@ const BOOKING_STATUS = {
   CANCELLED: 'cancelled',
 };
 
+// Retry Queue Status
+const RETRY_STATUS = {
+  ACTIVE: 'active',
+  SUCCESS: 'success',
+  EXHAUSTED: 'exhausted',
+  CANCELLED: 'cancelled',
+};
+
 // Activity Type
 const ACTIVITY_TYPE = 'football_5v5';
 
@@ -82,4 +90,5 @@ module.exports = {
 
   // Status
   BOOKING_STATUS,
+  RETRY_STATUS,
 };
