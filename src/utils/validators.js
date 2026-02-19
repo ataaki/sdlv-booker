@@ -203,6 +203,33 @@ function validateBookingRule({ day_of_week, target_time, duration }) {
   return errors;
 }
 
+function validateRetryConfig(config) {
+  if (config === null || config === undefined) return null;
+
+  if (!Array.isArray(config)) {
+    return 'retry_config must be an array';
+  }
+
+  if (config.length === 0) {
+    return 'retry_config must have at least one step';
+  }
+
+  for (let i = 0; i < config.length; i++) {
+    const step = config[i];
+    if (typeof step !== 'object' || step === null) {
+      return `retry_config[${i}] must be an object`;
+    }
+    if (typeof step.count !== 'number' || step.count < 0 || !Number.isInteger(step.count)) {
+      return `retry_config[${i}].count must be a non-negative integer (0 = infinite)`;
+    }
+    if (typeof step.delay_minutes !== 'number' || step.delay_minutes < 1 || !Number.isInteger(step.delay_minutes)) {
+      return `retry_config[${i}].delay_minutes must be a positive integer`;
+    }
+  }
+
+  return null;
+}
+
 module.exports = {
   validators,
   validateTimeFormat,
@@ -213,4 +240,5 @@ module.exports = {
   validateDateFormat,
   validateBookingAdvanceDays,
   validateBookingRule,
+  validateRetryConfig,
 };
