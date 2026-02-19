@@ -96,7 +96,8 @@ export default function App() {
   }, [dashboard.data])
 
   const handleSaveRule = useCallback(async (data: {
-    day_of_week: number; target_time: string; trigger_time: string; duration: number; playground_order: string[] | null
+    day_of_week: number; target_time: string; trigger_time: string; duration: number;
+    playground_order: string[] | null; retry_config: import('./types').RetryStep[] | null
   }) => {
     try {
       if (editingRule) {
@@ -155,6 +156,16 @@ export default function App() {
       setBookNowRuleId(null)
     }
   }, [rules, dashboard, bookings, toast])
+
+  const handleCancelRetry = useCallback(async (retryId: number) => {
+    try {
+      await rules.cancelRetry(retryId)
+      toast('success', 'Retry annulé')
+      await dashboard.refresh()
+    } catch (err) {
+      toast('error', 'Erreur', err instanceof Error ? err.message : 'Erreur inconnue')
+    }
+  }, [rules, dashboard, toast])
 
   // --- Cancel booking ---
   const handleCancelBookingRequest = useCallback((id: string, date: string, time: string, playground: string) => {
@@ -392,6 +403,7 @@ export default function App() {
                 <RuleCard
                   key={rule.id}
                   rule={rule}
+                  activeRetry={dashData.active_retries?.find(r => r.rule_id === rule.id && r.status === 'active') ?? null}
                   onEdit={handleEditRule}
                   onDelete={(id) => {
                     const r = dashData.rules.find((x) => x.id === id)
@@ -399,6 +411,7 @@ export default function App() {
                   }}
                   onToggle={handleToggleRule}
                   onBookNow={handleBookNow}
+                  onCancelRetry={handleCancelRetry}
                   bookingLoading={bookNowRuleId === rule.id}
                 />
               ))}
