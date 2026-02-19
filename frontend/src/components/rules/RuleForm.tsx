@@ -2,14 +2,18 @@ import { useState, useEffect } from 'react'
 import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from '@headlessui/react'
 import { Fragment } from 'react'
 import { DAY_OPTIONS, DURATION_OPTIONS } from '../../lib/constants'
-import type { Rule, DashboardConfig } from '../../types'
+import type { Rule, DashboardConfig, RetryStep } from '../../types'
 import Button from '../ui/Button'
 import PlaygroundPrefs from './PlaygroundPrefs'
+import RetryStepsEditor from './RetryStepsEditor'
 
 interface RuleFormProps {
   open: boolean
   onClose: () => void
-  onSave: (data: { day_of_week: number; target_time: string; trigger_time: string; duration: number; playground_order: string[] | null }) => Promise<void>
+  onSave: (data: {
+    day_of_week: number; target_time: string; trigger_time: string; duration: number;
+    playground_order: string[] | null; retry_config: RetryStep[] | null
+  }) => Promise<void>
   rule: Rule | null
   config: DashboardConfig
 }
@@ -20,6 +24,8 @@ export default function RuleForm({ open, onClose, onSave, rule, config }: RuleFo
   const [triggerTime, setTriggerTime] = useState('00:00')
   const [duration, setDuration] = useState(60)
   const [playgroundOrder, setPlaygroundOrder] = useState<string[]>([])
+  const [retryEnabled, setRetryEnabled] = useState(false)
+  const [retrySteps, setRetrySteps] = useState<RetryStep[]>([{ count: 5, delay_minutes: 5 }])
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -29,12 +35,21 @@ export default function RuleForm({ open, onClose, onSave, rule, config }: RuleFo
       setTriggerTime(rule.trigger_time || '00:00')
       setDuration(rule.duration)
       setPlaygroundOrder(rule.playground_order ?? [])
+      if (rule.retry_config && rule.retry_config.length > 0) {
+        setRetryEnabled(true)
+        setRetrySteps(rule.retry_config)
+      } else {
+        setRetryEnabled(false)
+        setRetrySteps([{ count: 5, delay_minutes: 5 }])
+      }
     } else {
       setDayOfWeek(1)
       setTargetTime('19:00')
       setTriggerTime('00:00')
       setDuration(60)
       setPlaygroundOrder([])
+      setRetryEnabled(false)
+      setRetrySteps([{ count: 5, delay_minutes: 5 }])
     }
   }, [rule, open])
 
@@ -47,6 +62,7 @@ export default function RuleForm({ open, onClose, onSave, rule, config }: RuleFo
         trigger_time: triggerTime,
         duration,
         playground_order: playgroundOrder.length > 0 ? playgroundOrder : null,
+        retry_config: retryEnabled ? retrySteps : null,
       })
       onClose()
     } finally {
@@ -134,6 +150,24 @@ export default function RuleForm({ open, onClose, onSave, rule, config }: RuleFo
                   selected={playgroundOrder}
                   onChange={setPlaygroundOrder}
                 />
+              </div>
+
+              <div className="mt-4 border-t border-slate-100 dark:border-slate-700 pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-semibold text-slate-500">
+                    Retry si aucun slot disponible
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setRetryEnabled(!retryEnabled)}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${retryEnabled ? 'bg-sky-500' : 'bg-slate-200 dark:bg-slate-600'}`}
+                  >
+                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${retryEnabled ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+                {retryEnabled && (
+                  <RetryStepsEditor steps={retrySteps} onChange={setRetrySteps} />
+                )}
               </div>
 
               <div className="flex flex-col-reverse gap-2.5 mt-6 sm:flex-row sm:justify-end">
