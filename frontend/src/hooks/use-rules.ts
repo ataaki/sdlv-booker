@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import { api } from '../api/client'
-import type { BookResult } from '../types'
+import type { BookResult, RetryStep } from '../types'
 
 interface RuleInput {
   day_of_week: number
@@ -8,6 +8,7 @@ interface RuleInput {
   trigger_time: string
   duration: number
   playground_order: string[] | null
+  retry_config: RetryStep[] | null
 }
 
 export function useRules() {
@@ -31,5 +32,9 @@ export function useRules() {
     return api.post<BookResult>('/book-now', { rule_id: ruleId, date })
   }, [])
 
-  return { createRule, updateRule, deleteRule, toggleRule, bookNow }
+  const cancelRetry = useCallback(async (retryId: number) => {
+    return api.delete(`/retries/${retryId}`)
+  }, [])
+
+  return { createRule, updateRule, deleteRule, toggleRule, bookNow, cancelRetry }
 }
