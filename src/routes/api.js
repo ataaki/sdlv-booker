@@ -7,7 +7,7 @@ const { executeBooking, getNextDateForDay, getJ45Info, DAY_NAMES, getBookingAdva
 const { resolveConfig, resetConfig } = require('../api/config-resolver');
 const { VALID_DURATIONS } = require('../constants');
 const { parsePlaygroundOrder } = require('../utils/json-helpers');
-const { validateTimeFormat, validateDuration, validateBookingRule, validateBookingAdvanceDays } = require('../utils/validators');
+const { validateTimeFormat, validateDuration, validateBookingRule, validateBookingAdvanceDays, validateRetryConfig } = require('../utils/validators');
 const { errorHandler, validationError, notFoundError } = require('../middleware/error-handler');
 const { findAndBookSlot } = require('../services/booking');
 const { executePaymentFlow } = require('../services/payment');
@@ -57,20 +57,21 @@ router.get('/rules', (req, res) => {
 });
 
 router.post('/rules', (req, res) => {
-  const { day_of_week, target_time, trigger_time, duration, playground_order } = req.body;
+  const { day_of_week, target_time, trigger_time, duration, playground_order, retry_config } = req.body;
 
-  // Validate using centralized validators
   const errors = validateBookingRule({ day_of_week, target_time, duration });
-  if (errors.length > 0) {
-    return validationError(res, errors[0]);
-  }
+  if (errors.length > 0) return validationError(res, errors[0]);
+
+  const retryError = validateRetryConfig(retry_config);
+  if (retryError) return validationError(res, retryError);
 
   const rule = db.createRule({
     day_of_week,
     target_time,
     trigger_time: trigger_time || '00:00',
     duration: duration || 60,
-    playground_order: playground_order || null
+    playground_order: playground_order || null,
+    retry_config: retry_config || null,
   });
   res.status(201).json(rule);
 });
@@ -89,6 +90,11 @@ router.put('/rules/:id', (req, res) => {
     return validationError(res, errors[0]);
   }
 
+  if (req.body.retry_config !== undefined) {
+    const retryError = validateRetryConfig(req.body.retry_config);
+    if (retryError) return validationError(res, retryError);
+  }
+
   const updated = db.updateRule(req.params.id, req.body);
   res.json(updated);
 });
@@ -98,6 +104,20 @@ router.delete('/rules/:id', (req, res) => {
   if (!rule) return notFoundError(res, 'Rule');
 
   db.deleteRule(req.params.id);
+  res.json({ success: true });
+});
+
+// --- Retry Queue ---
+
+router.get('/retries', (req, res) => {
+  const retries = db.getActiveRetries();
+  res.json(retries);
+});
+
+router.delete('/retries/:id', (req, res) => {
+  const retry = db.getRetryById(req.params.id);
+  if (!retry) return notFoundError(res, 'Retry');
+  db.cancelRetryEntry(parseInt(req.params.id));
   res.json({ success: true });
 });
 
@@ -433,15 +453,22 @@ router.get('/dashboard', (req, res) => {
   const rulesWithInfo = rules.map(rule => ({
     ...rule,
     playground_order: parsePlaygroundOrder(rule.playground_order),
+    retry_config: rule.retry_config ? JSON.parse(rule.retry_config) : null,
     day_name: DAY_NAMES[rule.day_of_week],
     j45: getJ45Info(rule.day_of_week),
     duration_label: `${rule.duration} min`,
   }));
 
   const creds = db.getCredentials();
+  const activeRetries = db.getActiveRetries().map(r => ({
+    ...r,
+    retry_config: JSON.parse(r.retry_config),
+    playground_order: r.playground_order ? JSON.parse(r.playground_order) : null,
+  }));
   res.json({
     rules: rulesWithInfo,
     recent_logs: logs,
+    active_retries: activeRetries,
     credentials_configured: !!creds,
     config: {
       advance_days: getBookingAdvanceDays(),
