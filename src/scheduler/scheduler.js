@@ -1,6 +1,6 @@
 const cron = require('node-cron');
-const { getEnabledRules, getSetting, getCredentials } = require('../db/database');
-const { DAY_NAMES, DEFAULT_BOOKING_ADVANCE_DAYS } = require('../constants');
+const { getEnabledRules, getSetting, getCredentials, getDueRetries, createRetryEntry, updateRetryEntry, getActiveRetryForRule } = require('../db/database');
+const { DAY_NAMES, DEFAULT_BOOKING_ADVANCE_DAYS, RETRY_STATUS } = require('../constants');
 const { parsePlaygroundOrder } = require('../utils/json-helpers');
 const { findAndBookSlot, checkExistingBooking } = require('../services/booking');
 const { executePaymentFlow } = require('../services/payment');
@@ -124,6 +124,7 @@ async function executeBooking(rule, targetDate) {
         targetDate,
         targetTime: rule.target_time,
       });
+      enqueueRetry(rule, targetDate);
       return { status: 'no_slots' };
     }
 
@@ -214,6 +215,158 @@ async function executeBooking(rule, targetDate) {
 }
 
 /**
+ * Enqueue a retry for a rule that returned no_slots.
+ */
+function enqueueRetry(rule, targetDate) {
+  const retryConfig = rule.retry_config ? (typeof rule.retry_config === 'string' ? JSON.parse(rule.retry_config) : rule.retry_config) : null;
+  if (!retryConfig || retryConfig.length === 0) return;
+
+  const existing = getActiveRetryForRule(rule.id, targetDate);
+  if (existing) {
+    console.log(`[Retry] Already queued for rule #${rule.id} on ${targetDate}`);
+    return;
+  }
+
+  const firstStep = retryConfig[0];
+  const nextRetry = new Date(Date.now() + firstStep.delay_minutes * 60_000);
+
+  createRetryEntry({
+    rule_id: rule.id,
+    target_date: targetDate,
+    target_time: rule.target_time,
+    duration: rule.duration,
+    activity: rule.activity || 'football_5v5',
+    playground_order: rule.playground_order,
+    retry_config: retryConfig,
+    next_retry_at: nextRetry.toISOString(),
+  });
+
+  console.log(`[Retry] Queued for rule #${rule.id} on ${targetDate}, first retry at ${nextRetry.toISOString()}`);
+}
+
+/**
+ * Advance a retry entry to its next attempt, following the step escalation config.
+ */
+function advanceRetry(retry, retryConfig) {
+  const newTotalAttempts = retry.total_attempts + 1;
+  const newAttemptsInStep = retry.attempts_in_step + 1;
+  const currentStep = retryConfig[retry.current_step];
+
+  let nextStep = retry.current_step;
+  let nextAttemptsInStep = newAttemptsInStep;
+
+  if (currentStep.count > 0 && newAttemptsInStep >= currentStep.count) {
+    nextStep = retry.current_step + 1;
+    nextAttemptsInStep = 0;
+
+    if (nextStep >= retryConfig.length) {
+      updateRetryEntry(retry.id, {
+        total_attempts: newTotalAttempts,
+        status: RETRY_STATUS.EXHAUSTED,
+      });
+      console.log(`[Retry] All steps exhausted for rule #${retry.rule_id} on ${retry.target_date} after ${newTotalAttempts} attempts`);
+      logNoSlots({ ruleId: retry.rule_id, targetDate: retry.target_date, targetTime: retry.target_time });
+      return;
+    }
+  }
+
+  const delayMinutes = retryConfig[nextStep].delay_minutes;
+  const nextRetryAt = new Date(Date.now() + delayMinutes * 60_000).toISOString();
+
+  updateRetryEntry(retry.id, {
+    current_step: nextStep,
+    attempts_in_step: nextAttemptsInStep,
+    total_attempts: newTotalAttempts,
+    next_retry_at: nextRetryAt,
+  });
+
+  console.log(`[Retry] Next attempt for rule #${retry.rule_id} at ${nextRetryAt} (step ${nextStep + 1}/${retryConfig.length}, attempt ${nextAttemptsInStep + 1}/${retryConfig[nextStep].count || 'inf'})`);
+}
+
+/**
+ * Process due retry entries.
+ */
+async function processRetries() {
+  const now = new Date();
+  const dueRetries = getDueRetries(now.toISOString());
+  if (dueRetries.length === 0) return;
+
+  console.log(`[Retry] Processing ${dueRetries.length} due retry(ies)...`);
+
+  for (const retry of dueRetries) {
+    try {
+      const retryConfig = JSON.parse(retry.retry_config);
+      const playgroundOrder = parsePlaygroundOrder(retry.playground_order);
+
+      console.log(`[Retry] Attempt #${retry.total_attempts + 1} for rule #${retry.rule_id} on ${retry.target_date}`);
+
+      const alreadyBooked = await checkExistingBooking(retry.target_date);
+      if (alreadyBooked) {
+        console.log(`[Retry] Booking already exists for ${retry.target_date}, marking as success`);
+        updateRetryEntry(retry.id, { status: RETRY_STATUS.SUCCESS });
+        continue;
+      }
+
+      const bookingResult = await findAndBookSlot({
+        date: retry.target_date,
+        targetTime: retry.target_time,
+        duration: retry.duration,
+        playgroundOrder,
+      });
+
+      if (bookingResult) {
+        const { bookingId, playground, slot, price, user } = bookingResult;
+        try {
+          await executePaymentFlow({
+            bookingId,
+            price: price.pricePerParticipant,
+            userId: user.id,
+            context: 'retry booking',
+          });
+
+          logSuccess({
+            ruleId: retry.rule_id,
+            targetDate: retry.target_date,
+            targetTime: retry.target_time,
+            bookedTime: slot.startAt,
+            playground: playground.name,
+            bookingId,
+            price: price.pricePerParticipant,
+          });
+
+          updateRetryEntry(retry.id, { status: RETRY_STATUS.SUCCESS, total_attempts: retry.total_attempts + 1 });
+          console.log(`[Retry] Success! Booked ${playground.name} at ${slot.startAt} on ${retry.target_date}`);
+        } catch (paymentErr) {
+          try { await cancelBooking(bookingId); } catch (cancelErr) {
+            console.error(`[Retry] Cancel failed for ${bookingId}: ${cancelErr.message}`);
+          }
+          logCancellation({
+            ruleId: retry.rule_id,
+            targetDate: retry.target_date,
+            targetTime: retry.target_time,
+            playground: playground.name,
+            bookingId,
+            errorMessage: `Paiement echoue lors du retry: ${paymentErr.message}`,
+          });
+          advanceRetry(retry, retryConfig);
+        }
+      } else {
+        console.log(`[Retry] No slots for rule #${retry.rule_id} on ${retry.target_date}, advancing...`);
+        advanceRetry(retry, retryConfig);
+      }
+    } catch (err) {
+      console.error(`[Retry] Error processing retry #${retry.id}: ${err.message}`);
+      try {
+        const retryConfig = JSON.parse(retry.retry_config);
+        advanceRetry(retry, retryConfig);
+      } catch {
+        updateRetryEntry(retry.id, { status: RETRY_STATUS.EXHAUSTED });
+      }
+    }
+  }
+}
+
+/**
  * Check all rules and execute bookings for today's J-45 targets.
  * When triggerTime is provided, only processes rules matching that trigger_time.
  */
@@ -264,6 +417,12 @@ function startScheduler() {
     } catch (err) {
       console.error(`[Scheduler] Error in scheduled run: ${err.message}`);
     }
+
+    try {
+      await processRetries();
+    } catch (err) {
+      console.error(`[Retry] Error in retry processing: ${err.message}`);
+    }
   });
 
   console.log('[Scheduler] Ready.');
@@ -278,4 +437,6 @@ module.exports = {
   getJ45Info,
   DAY_NAMES,
   getBookingAdvanceDays,
+  enqueueRetry,
+  processRetries,
 };
