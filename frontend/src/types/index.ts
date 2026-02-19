@@ -6,6 +6,7 @@ export interface Rule {
   duration: number
   activity: string
   playground_order: string[] | null
+  retry_config: RetryStep[] | null
   enabled: boolean
   created_at: string
   day_name: string
@@ -19,9 +20,32 @@ export interface J45Info {
   days_until_attempt: number
 }
 
+export interface RetryStep {
+  count: number
+  delay_minutes: number
+}
+
+export interface RetryQueueEntry {
+  id: number
+  rule_id: number
+  target_date: string
+  target_time: string
+  duration: number
+  activity: string
+  playground_order: string[] | null
+  retry_config: RetryStep[]
+  current_step: number
+  attempts_in_step: number
+  total_attempts: number
+  next_retry_at: string
+  status: 'active' | 'success' | 'exhausted' | 'cancelled'
+  created_at: string
+}
+
 export interface DashboardData {
   rules: Rule[]
   recent_logs: Log[]
+  active_retries: RetryQueueEntry[]
   credentials_configured: boolean
   config: DashboardConfig
 }
