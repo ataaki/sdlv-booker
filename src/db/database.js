@@ -32,6 +32,32 @@ const MIGRATIONS = [
       db.exec("ALTER TABLE booking_rules ADD COLUMN trigger_time TEXT NOT NULL DEFAULT '00:00'");
     }
   },
+  // v3: add retry_config column to booking_rules + retry_queue table
+  () => {
+    const cols = db.pragma('table_info(booking_rules)');
+    if (!cols.some(c => c.name === 'retry_config')) {
+      db.exec('ALTER TABLE booking_rules ADD COLUMN retry_config TEXT DEFAULT NULL');
+    }
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS retry_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        rule_id INTEGER NOT NULL,
+        target_date TEXT NOT NULL,
+        target_time TEXT NOT NULL,
+        duration INTEGER NOT NULL,
+        activity TEXT NOT NULL,
+        playground_order TEXT,
+        retry_config TEXT NOT NULL,
+        current_step INTEGER NOT NULL DEFAULT 0,
+        attempts_in_step INTEGER NOT NULL DEFAULT 0,
+        total_attempts INTEGER NOT NULL DEFAULT 0,
+        next_retry_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (rule_id) REFERENCES booking_rules(id)
+      )
+    `);
+  },
 ];
 
 function initSchema() {
@@ -107,16 +133,17 @@ function getRuleById(id) {
   return getDb().prepare('SELECT * FROM booking_rules WHERE id = ?').get(id);
 }
 
-function createRule({ day_of_week, target_time, trigger_time = '00:00', duration = 60, activity = 'football_5v5', playground_order = null }) {
+function createRule({ day_of_week, target_time, trigger_time = '00:00', duration = 60, activity = 'football_5v5', playground_order = null, retry_config = null }) {
   const pgOrder = playground_order ? JSON.stringify(playground_order) : null;
+  const retryJson = retry_config ? JSON.stringify(retry_config) : null;
   const stmt = getDb().prepare(
-    'INSERT INTO booking_rules (day_of_week, target_time, trigger_time, duration, activity, playground_order) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO booking_rules (day_of_week, target_time, trigger_time, duration, activity, playground_order, retry_config) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
-  const result = stmt.run(day_of_week, target_time, trigger_time, duration, activity, pgOrder);
+  const result = stmt.run(day_of_week, target_time, trigger_time, duration, activity, pgOrder, retryJson);
   return getRuleById(result.lastInsertRowid);
 }
 
-function updateRule(id, { day_of_week, target_time, trigger_time, duration, enabled, playground_order }) {
+function updateRule(id, { day_of_week, target_time, trigger_time, duration, enabled, playground_order, retry_config }) {
   const fields = [];
   const values = [];
 
@@ -126,6 +153,7 @@ function updateRule(id, { day_of_week, target_time, trigger_time, duration, enab
   if (duration !== undefined) { fields.push('duration = ?'); values.push(duration); }
   if (enabled !== undefined) { fields.push('enabled = ?'); values.push(enabled ? 1 : 0); }
   if (playground_order !== undefined) { fields.push('playground_order = ?'); values.push(playground_order ? JSON.stringify(playground_order) : null); }
+  if (retry_config !== undefined) { fields.push('retry_config = ?'); values.push(retry_config ? JSON.stringify(retry_config) : null); }
 
   if (fields.length === 0) return getRuleById(id);
 
@@ -232,6 +260,59 @@ function setCredentials(email, password) {
   setSetting('doinsport_password', encrypt(password));
 }
 
+// --- Retry Queue ---
+
+function getActiveRetries() {
+  return getDb().prepare(
+    "SELECT * FROM retry_queue WHERE status = 'active' ORDER BY next_retry_at"
+  ).all();
+}
+
+function getDueRetries(nowIso) {
+  return getDb().prepare(
+    "SELECT * FROM retry_queue WHERE status = 'active' AND next_retry_at <= ? ORDER BY next_retry_at"
+  ).all(nowIso);
+}
+
+function getActiveRetryForRule(ruleId, targetDate) {
+  return getDb().prepare(
+    "SELECT * FROM retry_queue WHERE rule_id = ? AND target_date = ? AND status = 'active'"
+  ).get(ruleId, targetDate);
+}
+
+function createRetryEntry({ rule_id, target_date, target_time, duration, activity, playground_order, retry_config, next_retry_at }) {
+  const stmt = getDb().prepare(
+    `INSERT INTO retry_queue (rule_id, target_date, target_time, duration, activity, playground_order, retry_config, next_retry_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const result = stmt.run(rule_id, target_date, target_time, duration, activity, playground_order, JSON.stringify(retry_config), next_retry_at);
+  return getDb().prepare('SELECT * FROM retry_queue WHERE id = ?').get(result.lastInsertRowid);
+}
+
+function updateRetryEntry(id, { current_step, attempts_in_step, total_attempts, next_retry_at, status }) {
+  const fields = [];
+  const values = [];
+
+  if (current_step !== undefined) { fields.push('current_step = ?'); values.push(current_step); }
+  if (attempts_in_step !== undefined) { fields.push('attempts_in_step = ?'); values.push(attempts_in_step); }
+  if (total_attempts !== undefined) { fields.push('total_attempts = ?'); values.push(total_attempts); }
+  if (next_retry_at !== undefined) { fields.push('next_retry_at = ?'); values.push(next_retry_at); }
+  if (status !== undefined) { fields.push('status = ?'); values.push(status); }
+
+  if (fields.length === 0) return;
+
+  values.push(id);
+  getDb().prepare(`UPDATE retry_queue SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+}
+
+function cancelRetryEntry(id) {
+  getDb().prepare("UPDATE retry_queue SET status = 'cancelled' WHERE id = ? AND status = 'active'").run(id);
+}
+
+function getRetryById(id) {
+  return getDb().prepare('SELECT * FROM retry_queue WHERE id = ?').get(id);
+}
+
 module.exports = {
   getDb,
   getAllRules,
@@ -248,4 +329,11 @@ module.exports = {
   setSetting,
   getCredentials,
   setCredentials,
+  getActiveRetries,
+  getDueRetries,
+  getActiveRetryForRule,
+  createRetryEntry,
+  updateRetryEntry,
+  cancelRetryEntry,
+  getRetryById,
 };
