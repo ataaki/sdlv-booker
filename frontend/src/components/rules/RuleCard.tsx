@@ -72,29 +72,39 @@ export default function RuleCard({ rule, activeRetry, onEdit, onDelete, onToggle
       <div className="bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-700 px-4 py-2 text-xs text-slate-500">
         {j45Label}
       </div>
-      {activeRetry && (
-        <div className="bg-amber-50 dark:bg-amber-500/10 border-t border-amber-200 dark:border-amber-500/20 px-4 py-2 flex items-center justify-between">
-          <span className="text-xs text-amber-700 dark:text-amber-400 font-medium">
-            Retry en cours — tentative {activeRetry.total_attempts + 1}
-            {activeRetry.retry_config[activeRetry.current_step]?.count > 0
-              ? `/${activeRetry.retry_config[activeRetry.current_step].count}`
-              : ''
-            }
-            {activeRetry.retry_config.length > 1
-              ? ` (\u00e9tape ${activeRetry.current_step + 1}/${activeRetry.retry_config.length})`
-              : ''
-            }
-          </span>
-          {onCancelRetry && (
-            <button
-              onClick={() => onCancelRetry(activeRetry.id)}
-              className="text-xs text-amber-600 dark:text-amber-400 hover:text-red-500 font-medium transition-colors"
-            >
-              Annuler
-            </button>
-          )}
-        </div>
-      )}
+      {activeRetry && (() => {
+        const step = activeRetry.retry_config[activeRetry.current_step]
+        const nextAt = new Date(activeRetry.next_retry_at)
+        const nextTime = nextAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+        const nextDate = nextAt.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })
+        const isToday = new Date().toDateString() === nextAt.toDateString()
+
+        return (
+          <div className="bg-amber-50 dark:bg-amber-500/10 border-t border-amber-200 dark:border-amber-500/20 px-4 py-2 flex items-center justify-between gap-2">
+            <div className="text-xs text-amber-700 dark:text-amber-400 font-medium min-w-0">
+              <span>
+                Retry en cours — tentative {activeRetry.attempts_in_step + 1}
+                {step?.count > 0 ? `/${step.count}` : '/∞'}
+                {activeRetry.retry_config.length > 1
+                  ? ` (étape ${activeRetry.current_step + 1}/${activeRetry.retry_config.length})`
+                  : ''
+                }
+              </span>
+              <span className="text-amber-500 dark:text-amber-500/80">
+                {' · '}Prochain essai {isToday ? `à ${nextTime}` : `le ${nextDate} à ${nextTime}`}
+              </span>
+            </div>
+            {onCancelRetry && (
+              <button
+                onClick={() => onCancelRetry(activeRetry.id)}
+                className="text-xs text-amber-600 dark:text-amber-400 hover:text-red-500 font-medium transition-colors shrink-0"
+              >
+                Annuler
+              </button>
+            )}
+          </div>
+        )
+      })()}
     </div>
   )
 }
