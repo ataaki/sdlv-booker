@@ -264,7 +264,7 @@ function setCredentials(email, password) {
 
 function getActiveRetries() {
   return getDb().prepare(
-    "SELECT * FROM retry_queue WHERE status = 'active' ORDER BY next_retry_at"
+    "SELECT * FROM retry_queue WHERE status IN ('active', 'processing') ORDER BY next_retry_at"
   ).all();
 }
 
@@ -276,7 +276,7 @@ function getDueRetries(nowIso) {
 
 function getActiveRetryForRule(ruleId, targetDate) {
   return getDb().prepare(
-    "SELECT * FROM retry_queue WHERE rule_id = ? AND target_date = ? AND status = 'active'"
+    "SELECT * FROM retry_queue WHERE rule_id = ? AND target_date = ? AND status IN ('active', 'processing')"
   ).get(ruleId, targetDate);
 }
 
@@ -306,7 +306,7 @@ function updateRetryEntry(id, { current_step, attempts_in_step, total_attempts, 
 }
 
 function cancelRetryEntry(id) {
-  getDb().prepare("UPDATE retry_queue SET status = 'cancelled' WHERE id = ? AND status = 'active'").run(id);
+  getDb().prepare("UPDATE retry_queue SET status = 'cancelled' WHERE id = ? AND status IN ('active', 'processing')").run(id);
 }
 
 function getRetryById(id) {

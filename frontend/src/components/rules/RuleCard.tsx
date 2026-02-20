@@ -2,6 +2,7 @@ import { DAY_NAMES_SHORT } from '../../lib/constants'
 import { formatDate, formatDuration } from '../../lib/format'
 import type { Rule, RetryQueueEntry } from '../../types'
 import Button from '../ui/Button'
+import Spinner from '../ui/Spinner'
 import Toggle from '../ui/Toggle'
 
 interface RuleCardProps {
@@ -74,6 +75,7 @@ export default function RuleCard({ rule, activeRetry, onEdit, onDelete, onToggle
       </div>
       {activeRetry && (() => {
         const step = activeRetry.retry_config[activeRetry.current_step]
+        const isProcessing = activeRetry.status === 'processing'
         const nextAt = new Date(activeRetry.next_retry_at)
         const nextTime = nextAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
         const nextDate = nextAt.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })
@@ -81,18 +83,21 @@ export default function RuleCard({ rule, activeRetry, onEdit, onDelete, onToggle
 
         return (
           <div className="bg-amber-50 dark:bg-amber-500/10 border-t border-amber-200 dark:border-amber-500/20 px-4 py-2 flex items-center justify-between gap-2">
-            <div className="text-xs text-amber-700 dark:text-amber-400 font-medium min-w-0">
+            <div className="text-xs text-amber-700 dark:text-amber-400 font-medium min-w-0 flex items-center gap-1.5">
+              {isProcessing && <Spinner size="sm" />}
               <span>
-                Retry en cours — tentative {activeRetry.attempts_in_step + 1}
+                {isProcessing ? 'Tentative en cours' : 'Retry en cours'} — tentative {activeRetry.attempts_in_step + 1}
                 {step?.count > 0 ? `/${step.count}` : '/∞'}
                 {activeRetry.retry_config.length > 1
                   ? ` (étape ${activeRetry.current_step + 1}/${activeRetry.retry_config.length})`
                   : ''
                 }
               </span>
-              <span className="text-amber-500 dark:text-amber-500/80">
-                {' · '}Prochain essai {isToday ? `à ${nextTime}` : `le ${nextDate} à ${nextTime}`}
-              </span>
+              {!isProcessing && (
+                <span className="text-amber-500 dark:text-amber-500/80">
+                  {' · '}Prochain essai {isToday ? `à ${nextTime}` : `le ${nextDate} à ${nextTime}`}
+                </span>
+              )}
             </div>
             {onCancelRetry && (
               <button

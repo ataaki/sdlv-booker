@@ -9,6 +9,18 @@ const { logSuccess, logFailure, logPaymentFailure, logCancellation, logNoSlots, 
 
 let currentTask = null;
 
+/**
+ * Round a future timestamp to the start of the target minute (seconds=0, ms=0).
+ * This ensures the cron job (which fires at :05 of each minute) picks it up on time.
+ * @param {number} delayMinutes - delay in minutes from now
+ * @returns {Date} rounded to the start of the target minute
+ */
+function nextMinute(delayMinutes) {
+  const target = new Date(Date.now() + delayMinutes * 60_000);
+  target.setSeconds(0, 0);
+  return target;
+}
+
 function getBookingAdvanceDays() {
   return parseInt(getSetting('booking_advance_days', String(DEFAULT_BOOKING_ADVANCE_DAYS)));
 }
@@ -228,7 +240,7 @@ function enqueueRetry(rule, targetDate) {
   }
 
   const firstStep = retryConfig[0];
-  const nextRetry = new Date(Date.now() + firstStep.delay_minutes * 60_000);
+  const nextRetry = nextMinute(firstStep.delay_minutes);
 
   createRetryEntry({
     rule_id: rule.id,
@@ -271,13 +283,14 @@ function advanceRetry(retry, retryConfig) {
   }
 
   const delayMinutes = retryConfig[nextStep].delay_minutes;
-  const nextRetryAt = new Date(Date.now() + delayMinutes * 60_000).toISOString();
+  const nextRetryAt = nextMinute(delayMinutes).toISOString();
 
   updateRetryEntry(retry.id, {
     current_step: nextStep,
     attempts_in_step: nextAttemptsInStep,
     total_attempts: newTotalAttempts,
     next_retry_at: nextRetryAt,
+    status: RETRY_STATUS.ACTIVE,
   });
 
   console.log(`[Retry] Next attempt for rule #${retry.rule_id} at ${nextRetryAt} (step ${nextStep + 1}/${retryConfig.length}, attempt ${nextAttemptsInStep + 1}/${retryConfig[nextStep].count || 'inf'})`);
@@ -295,6 +308,9 @@ async function processRetries() {
 
   for (const retry of dueRetries) {
     try {
+      // Mark as processing so the frontend shows a spinner
+      updateRetryEntry(retry.id, { status: RETRY_STATUS.PROCESSING });
+
       const retryConfig = JSON.parse(retry.retry_config);
       const playgroundOrder = parsePlaygroundOrder(retry.playground_order);
 

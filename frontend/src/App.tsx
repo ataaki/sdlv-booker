@@ -403,7 +403,7 @@ export default function App() {
                 <RuleCard
                   key={rule.id}
                   rule={rule}
-                  activeRetry={dashData.active_retries?.find(r => r.rule_id === rule.id && r.status === 'active') ?? null}
+                  activeRetry={dashData.active_retries?.find(r => r.rule_id === rule.id && (r.status === 'active' || r.status === 'processing')) ?? null}
                   onEdit={handleEditRule}
                   onDelete={(id) => {
                     const r = dashData.rules.find((x) => x.id === id)

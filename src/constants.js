@@ -54,6 +54,7 @@ const BOOKING_STATUS = {
 // Retry Queue Status
 const RETRY_STATUS = {
   ACTIVE: 'active',
+  PROCESSING: 'processing',
   SUCCESS: 'success',
   EXHAUSTED: 'exhausted',
   CANCELLED: 'cancelled',

@@ -38,7 +38,7 @@ export interface RetryQueueEntry {
   attempts_in_step: number
   total_attempts: number
   next_retry_at: string
-  status: 'active' | 'success' | 'exhausted' | 'cancelled'
+  status: 'active' | 'processing' | 'success' | 'exhausted' | 'cancelled'
   created_at: string
 }
 
